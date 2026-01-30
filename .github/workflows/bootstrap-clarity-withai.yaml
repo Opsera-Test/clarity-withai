@@ -302,9 +302,83 @@ jobs:
             echo "Spoke cluster registered: ${{ env.SPOKE_CLUSTER }}" >> $GITHUB_STEP_SUMMARY
           fi
 
+  setup-cert-manager:
+    name: "Setup cert-manager ClusterIssuer"
+    needs: [validate, verify-infrastructure, register-spoke]
+    if: |
+      always() &&
+      needs.verify-infrastructure.outputs.spoke_exists == 'true' &&
+      (needs.register-spoke.result == 'success' || needs.register-spoke.result == 'skipped')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Configure kubectl for Spoke
+        run: |
+          aws eks update-kubeconfig --name ${{ env.SPOKE_CLUSTER }} --region ${{ env.AWS_REGION }}
+
+      - name: Verify cert-manager is installed
+        id: check-cert-manager
+        run: |
+          echo "### cert-manager Check" >> $GITHUB_STEP_SUMMARY
+          if kubectl get namespace cert-manager 2>/dev/null; then
+            echo "cert-manager namespace exists" >> $GITHUB_STEP_SUMMARY
+            
+            # Check if cert-manager pods are running
+            READY_PODS=$(kubectl get pods -n cert-manager --no-headers 2>/dev/null | grep -c "Running" || echo "0")
+            if [ "$READY_PODS" -gt 0 ]; then
+              echo "cert-manager is running ($READY_PODS pods)" >> $GITHUB_STEP_SUMMARY
+              echo "installed=true" >> $GITHUB_OUTPUT
+            else
+              echo "cert-manager pods not running" >> $GITHUB_STEP_SUMMARY
+              echo "installed=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "cert-manager NOT installed on spoke cluster" >> $GITHUB_STEP_SUMMARY
+            echo "installed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create ClusterIssuer for Let's Encrypt
+        if: steps.check-cert-manager.outputs.installed == 'true'
+        run: |
+          echo "### ClusterIssuer Setup" >> $GITHUB_STEP_SUMMARY
+          
+          # Check if ClusterIssuer already exists
+          if kubectl get clusterissuer letsencrypt-prod 2>/dev/null; then
+            echo "ClusterIssuer letsencrypt-prod already exists" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Creating ClusterIssuer letsencrypt-prod" >> $GITHUB_STEP_SUMMARY
+            cat <<EOF | kubectl apply -f -
+          apiVersion: cert-manager.io/v1
+          kind: ClusterIssuer
+          metadata:
+            name: letsencrypt-prod
+          spec:
+            acme:
+              server: https://acme-v02.api.letsencrypt.org/directory
+              email: devops@opsera.io
+              privateKeySecretRef:
+                name: letsencrypt-prod-account-key
+              solvers:
+                - http01:
+                    ingress:
+                      class: nginx
+          EOF
+            echo "ClusterIssuer created successfully" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Verify ClusterIssuer status
+          sleep 5
+          kubectl get clusterissuer letsencrypt-prod -o jsonpath='{.status.conditions[0].status}' >> $GITHUB_STEP_SUMMARY || echo "Status pending" >> $GITHUB_STEP_SUMMARY
+
   create-repo-secret:
     name: "Create ArgoCD Repo Secret"
-    needs: [validate, verify-infrastructure, register-spoke]
+    needs: [validate, verify-infrastructure, register-spoke, setup-cert-manager]
     if: |
       always() &&
       needs.verify-infrastructure.outputs.hub_exists == 'true' &&
@@ -457,7 +531,7 @@ jobs:
 
   summary:
     name: "Bootstrap Summary"
-    needs: [validate, verify-infrastructure, create-ecr, register-spoke, create-repo-secret, update-manifests, apply-argocd-app]
+    needs: [validate, verify-infrastructure, create-ecr, register-spoke, setup-cert-manager, create-repo-secret, update-manifests, apply-argocd-app]
     if: always()
     runs-on: ubuntu-latest
     steps:
