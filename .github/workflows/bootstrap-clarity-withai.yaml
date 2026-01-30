@@ -251,7 +251,34 @@ jobs:
           SPOKE_TOKEN: ${{ steps.token.outputs.token }}
         run: |
           echo "### Spoke Registration" >> $GITHUB_STEP_SUMMARY
-          cat <<EOF | kubectl apply -f -
+          
+          # Check if any cluster secret already has this server URL
+          EXISTING_SECRETS=$(kubectl get secrets -n argocd -l argocd.argoproj.io/secret-type=cluster -o name 2>/dev/null || echo "")
+          DUPLICATE_FOUND=false
+          
+          for secret in $EXISTING_SECRETS; do
+            SECRET_NAME=$(echo $secret | cut -d'/' -f2)
+            EXISTING_SERVER=$(kubectl get $secret -n argocd -o jsonpath='{.data.server}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
+            
+            if [ "$EXISTING_SERVER" == "${SPOKE_ENDPOINT}" ] && [ "$SECRET_NAME" != "${{ env.SPOKE_CLUSTER }}" ]; then
+              echo "Found duplicate cluster registration: $SECRET_NAME with same server URL" >> $GITHUB_STEP_SUMMARY
+              echo "Removing duplicate: $SECRET_NAME"
+              kubectl delete secret $SECRET_NAME -n argocd --ignore-not-found=true
+              DUPLICATE_FOUND=true
+            fi
+          done
+          
+          # Check if our cluster secret already exists with correct server
+          CURRENT_SERVER=$(kubectl get secret ${{ env.SPOKE_CLUSTER }} -n argocd -o jsonpath='{.data.server}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
+          
+          if [ "$CURRENT_SERVER" == "${SPOKE_ENDPOINT}" ]; then
+            echo "Cluster ${{ env.SPOKE_CLUSTER }} already registered with correct server URL - skipping" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Registering/updating cluster ${{ env.SPOKE_CLUSTER }}" >> $GITHUB_STEP_SUMMARY
+            # Delete existing if server URL is different
+            kubectl delete secret ${{ env.SPOKE_CLUSTER }} -n argocd --ignore-not-found=true
+            
+            cat <<EOF | kubectl apply -f -
           apiVersion: v1
           kind: Secret
           metadata:
@@ -272,7 +299,8 @@ jobs:
                 }
               }
           EOF
-          echo "Spoke cluster registered: ${{ env.SPOKE_CLUSTER }}" >> $GITHUB_STEP_SUMMARY
+            echo "Spoke cluster registered: ${{ env.SPOKE_CLUSTER }}" >> $GITHUB_STEP_SUMMARY
+          fi
 
   create-repo-secret:
     name: "Create ArgoCD Repo Secret"
@@ -300,14 +328,47 @@ jobs:
           REPO_URL: ${{ needs.validate.outputs.repo_url }}
         run: |
           echo "### Repository Secret" >> $GITHUB_STEP_SUMMARY
-          kubectl create secret generic repo-${{ env.APP_NAME }} -n argocd \
-            --from-literal=type=git \
-            --from-literal=url="${REPO_URL}" \
-            --from-literal=username=git \
-            --from-literal=password="${GH_PAT}" \
-            --dry-run=client -o yaml | kubectl apply -f -
-          kubectl label secret repo-${{ env.APP_NAME }} -n argocd \
-            argocd.argoproj.io/secret-type=repository --overwrite
+          
+          # Validate GH_PAT is set
+          if [ -z "${GH_PAT}" ]; then
+            echo "ERROR: GH_PAT secret is not set!" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+          
+          # Check if repo secret already exists with correct URL
+          EXISTING_URL=$(kubectl get secret repo-${{ env.APP_NAME }} -n argocd -o jsonpath='{.data.url}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
+          
+          if [ "$EXISTING_URL" == "${REPO_URL}" ]; then
+            echo "Repository secret already exists with correct URL" >> $GITHUB_STEP_SUMMARY
+            # Update the password in case it changed
+            kubectl patch secret repo-${{ env.APP_NAME }} -n argocd \
+              --type='json' -p="[{\"op\": \"replace\", \"path\": \"/data/password\", \"value\": \"$(echo -n ${GH_PAT} | base64)\"}]" 2>/dev/null || true
+          else
+            echo "Creating/updating repository secret" >> $GITHUB_STEP_SUMMARY
+            # Delete and recreate to ensure clean state
+            kubectl delete secret repo-${{ env.APP_NAME }} -n argocd --ignore-not-found=true
+            
+            # Create secret with proper ArgoCD format
+            cat <<EOF | kubectl apply -f -
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: repo-${{ env.APP_NAME }}
+            namespace: argocd
+            labels:
+              argocd.argoproj.io/secret-type: repository
+          type: Opaque
+          stringData:
+            type: git
+            url: "${REPO_URL}"
+            username: git
+            password: "${GH_PAT}"
+          EOF
+          fi
+          
+          # Verify secret was created correctly
+          kubectl get secret repo-${{ env.APP_NAME }} -n argocd -o jsonpath='{.metadata.labels}' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           echo "Repository secret created for ArgoCD" >> $GITHUB_STEP_SUMMARY
 
   update-manifests:
