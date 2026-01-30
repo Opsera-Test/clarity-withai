@@ -1,0 +1,66 @@
+# Disable TLS temporarily to allow HTTP access
+name: "🔓 cwa-4: Disable TLS (HTTP Only)"
+
+on:
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-west-2
+  SPOKE_CLUSTER: opsera-usw2-np
+  APP_NAMESPACE: opsera-cwa-4-dev
+
+jobs:
+  disable-tls:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Configure kubectl
+        run: aws eks update-kubeconfig --name ${{ env.SPOKE_CLUSTER }} --region ${{ env.AWS_REGION }}
+
+      - name: Remove TLS from Ingress
+        run: |
+          echo "=== Current Ingress ==="
+          kubectl get ingress cwa-4 -n ${{ env.APP_NAMESPACE }} -o yaml
+          
+          echo ""
+          echo "=== Removing TLS and cert-manager annotation ==="
+          kubectl patch ingress cwa-4 -n ${{ env.APP_NAMESPACE }} --type=json -p='[
+            {"op": "remove", "path": "/spec/tls"},
+            {"op": "remove", "path": "/metadata/annotations/cert-manager.io~1cluster-issuer"}
+          ]' || true
+          
+          # Also disable ssl-redirect
+          kubectl annotate ingress cwa-4 -n ${{ env.APP_NAMESPACE }} \
+            nginx.ingress.kubernetes.io/ssl-redirect=false --overwrite
+          
+          echo "✅ TLS disabled"
+
+      - name: Delete certificate objects
+        run: |
+          kubectl delete certificate --all -n ${{ env.APP_NAMESPACE }} 2>/dev/null || true
+          kubectl delete certificaterequest --all -n ${{ env.APP_NAMESPACE }} 2>/dev/null || true
+          kubectl delete secret cwa-4-dev-tls -n ${{ env.APP_NAMESPACE }} 2>/dev/null || true
+          echo "✅ Certificate objects cleaned up"
+
+      - name: Verify Ingress
+        run: |
+          echo "=== Updated Ingress ==="
+          kubectl get ingress cwa-4 -n ${{ env.APP_NAMESPACE }} -o yaml
+          
+          echo ""
+          echo "=== Pods ==="
+          kubectl get pods -n ${{ env.APP_NAMESPACE }}
+
+      - name: Test HTTP endpoint
+        run: |
+          echo ""
+          echo "=========================================="
+          echo "🌐 Application Endpoint (HTTP):"
+          echo "   http://opsera-cwa-4-dev.agent.opsera.dev"
+          echo "=========================================="
