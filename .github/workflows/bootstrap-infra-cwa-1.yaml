@@ -420,6 +420,7 @@ jobs:
   apply-argocd-app:
     name: Apply ArgoCD Application
     needs: [validate-prerequisites, setup-infrastructure]
+    if: always() && needs.setup-infrastructure.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
