@@ -24,7 +24,8 @@ on:
       environment:
         description: 'Target environment'
         type: choice
-        options: [dev]
+        options:
+          - dev
         default: dev
       skip_build:
         description: 'Skip build (use existing image)'
@@ -33,6 +34,7 @@ on:
       image_tag:
         description: 'Existing image tag (if skip_build)'
         type: string
+        default: ''
 
 # Prevent concurrent runs
 concurrency:

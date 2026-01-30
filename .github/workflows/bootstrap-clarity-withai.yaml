@@ -13,7 +13,6 @@ on:
         description: '☑️ I confirm bootstrap execution'
         type: boolean
         default: false
-        required: true
       skip_spoke_registration:
         description: 'Skip spoke registration (if already registered)'
         type: boolean
