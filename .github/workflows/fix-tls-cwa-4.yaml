@@ -67,18 +67,40 @@ jobs:
           
           echo "Found: $WILDCARD_SECRET"
           
-          # Get the secret data
-          kubectl get $WILDCARD_SECRET -n ingress-nginx -o yaml > /tmp/wildcard.yaml
+          # Check the secret type
+          SECRET_TYPE=$(kubectl get $WILDCARD_SECRET -n ingress-nginx -o jsonpath='{.type}')
+          echo "Secret type: $SECRET_TYPE"
           
-          # Modify for target namespace
-          sed -i "s/namespace: ingress-nginx/namespace: ${{ env.APP_NAMESPACE }}/" /tmp/wildcard.yaml
-          sed -i "s/name: .*/name: cwa-4-dev-tls/" /tmp/wildcard.yaml
+          # Get the data keys
+          DATA_KEYS=$(kubectl get $WILDCARD_SECRET -n ingress-nginx -o jsonpath='{.data}' | jq -r 'keys[]')
+          echo "Data keys: $DATA_KEYS"
           
-          # Remove resource version and UID for recreation
-          grep -v "resourceVersion\|uid\|creationTimestamp" /tmp/wildcard.yaml > /tmp/wildcard-clean.yaml
+          # Delete existing cert/secret that cert-manager created
+          echo "=== Removing existing cert-manager objects ==="
+          kubectl delete certificate cwa-4-dev-tls -n ${{ env.APP_NAMESPACE }} 2>/dev/null || true
+          kubectl delete secret cwa-4-dev-tls -n ${{ env.APP_NAMESPACE }} 2>/dev/null || true
           
-          echo "=== Applying wildcard cert to app namespace ==="
-          kubectl apply -f /tmp/wildcard-clean.yaml
+          # Also remove the annotation so cert-manager doesn't recreate
+          kubectl annotate ingress cwa-4 -n ${{ env.APP_NAMESPACE }} cert-manager.io/cluster-issuer- 2>/dev/null || true
+          
+          # Extract the secret data (handles both tls.crt/tls.key and cert/key formats)
+          if kubectl get $WILDCARD_SECRET -n ingress-nginx -o jsonpath='{.data.tls\.crt}' 2>/dev/null | base64 -d > /tmp/tls.crt 2>/dev/null; then
+            kubectl get $WILDCARD_SECRET -n ingress-nginx -o jsonpath='{.data.tls\.key}' | base64 -d > /tmp/tls.key
+          elif kubectl get $WILDCARD_SECRET -n ingress-nginx -o jsonpath='{.data.cert}' 2>/dev/null | base64 -d > /tmp/tls.crt 2>/dev/null; then
+            kubectl get $WILDCARD_SECRET -n ingress-nginx -o jsonpath='{.data.key}' | base64 -d > /tmp/tls.key
+          else
+            echo "Could not extract TLS data from secret"
+            # Try to see what's actually in the secret
+            kubectl get $WILDCARD_SECRET -n ingress-nginx -o yaml
+            exit 1
+          fi
+          
+          echo "=== Creating TLS secret in app namespace ==="
+          kubectl create secret tls cwa-4-dev-tls \
+            --cert=/tmp/tls.crt \
+            --key=/tmp/tls.key \
+            -n ${{ env.APP_NAMESPACE }} \
+            --dry-run=client -o yaml | kubectl apply -f -
           
           echo "=== Verifying ==="
           kubectl get secret cwa-4-dev-tls -n ${{ env.APP_NAMESPACE }}
