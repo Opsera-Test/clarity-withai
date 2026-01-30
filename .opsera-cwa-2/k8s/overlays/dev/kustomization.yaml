@@ -18,7 +18,7 @@ commonLabels:
 images:
   - name: cwa-2
     newName: 792373136340.dkr.ecr.us-east-1.amazonaws.com/opsera/cwa-2
-    newTag: latest
+    newTag: 1ec59a4-20260130203703
 
 patches:
   - target:
