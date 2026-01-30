@@ -2,95 +2,121 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
-All colors MUST be HSL.
-*/
+/* Enterprise AI Assistant Design System
+   Professional, trust-inspiring, explanation-first */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
+    /* Core palette - warm slate with amber accent */
+    --background: 40 20% 98%;
+    --foreground: 220 25% 12%;
 
     --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
+    --card-foreground: 220 25% 12%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
+    --popover-foreground: 220 25% 12%;
 
-    --primary: 222.2 47.4% 11.2%;
-    --primary-foreground: 210 40% 98%;
+    /* Deep slate primary */
+    --primary: 220 30% 20%;
+    --primary-foreground: 40 20% 98%;
 
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
+    /* Warm neutral secondary */
+    --secondary: 40 15% 94%;
+    --secondary-foreground: 220 25% 20%;
 
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
+    --muted: 40 10% 92%;
+    --muted-foreground: 220 15% 45%;
 
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
+    /* Amber accent for highlights */
+    --accent: 38 92% 50%;
+    --accent-foreground: 220 30% 12%;
 
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
 
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
+    --border: 220 15% 88%;
+    --input: 220 15% 88%;
+    --ring: 38 92% 50%;
 
-    --radius: 0.5rem;
+    --radius: 0.625rem;
 
-    --sidebar-background: 0 0% 98%;
+    /* Custom tokens for structured responses */
+    --section-reasoning: 215 80% 96%;
+    --section-reasoning-border: 215 60% 85%;
+    --section-assumptions: 45 80% 96%;
+    --section-assumptions-border: 45 60% 80%;
+    --section-tradeoffs: 280 60% 96%;
+    --section-tradeoffs-border: 280 40% 85%;
+    --section-recommendation: 160 50% 95%;
+    --section-recommendation-border: 160 40% 80%;
 
-    --sidebar-foreground: 240 5.3% 26.1%;
+    /* Executive summary highlight */
+    --summary-bg: 220 30% 97%;
+    --summary-border: 220 25% 85%;
 
-    --sidebar-primary: 240 5.9% 10%;
-
-    --sidebar-primary-foreground: 0 0% 98%;
-
-    --sidebar-accent: 240 4.8% 95.9%;
-
-    --sidebar-accent-foreground: 240 5.9% 10%;
-
-    --sidebar-border: 220 13% 91%;
-
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    /* Sidebar */
+    --sidebar-background: 220 25% 12%;
+    --sidebar-foreground: 40 20% 95%;
+    --sidebar-primary: 38 92% 50%;
+    --sidebar-primary-foreground: 220 30% 12%;
+    --sidebar-accent: 220 25% 18%;
+    --sidebar-accent-foreground: 40 20% 95%;
+    --sidebar-border: 220 20% 20%;
+    --sidebar-ring: 38 92% 50%;
   }
 
   .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
+    --background: 220 25% 8%;
+    --foreground: 40 15% 95%;
 
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
+    --card: 220 25% 11%;
+    --card-foreground: 40 15% 95%;
 
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
+    --popover: 220 25% 11%;
+    --popover-foreground: 40 15% 95%;
 
-    --primary: 210 40% 98%;
-    --primary-foreground: 222.2 47.4% 11.2%;
+    --primary: 40 20% 95%;
+    --primary-foreground: 220 25% 12%;
 
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
+    --secondary: 220 20% 16%;
+    --secondary-foreground: 40 15% 90%;
 
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
+    --muted: 220 20% 16%;
+    --muted-foreground: 220 15% 55%;
 
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
+    --accent: 38 92% 50%;
+    --accent-foreground: 220 30% 12%;
 
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
+    --destructive: 0 62% 45%;
+    --destructive-foreground: 0 0% 100%;
 
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 212.7 26.8% 83.9%;
-    --sidebar-background: 240 5.9% 10%;
-    --sidebar-foreground: 240 4.8% 95.9%;
-    --sidebar-primary: 224.3 76.3% 48%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 240 3.7% 15.9%;
-    --sidebar-accent-foreground: 240 4.8% 95.9%;
-    --sidebar-border: 240 3.7% 15.9%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --border: 220 20% 18%;
+    --input: 220 20% 18%;
+    --ring: 38 92% 50%;
+
+    --section-reasoning: 215 40% 14%;
+    --section-reasoning-border: 215 30% 25%;
+    --section-assumptions: 45 30% 14%;
+    --section-assumptions-border: 45 25% 25%;
+    --section-tradeoffs: 280 25% 14%;
+    --section-tradeoffs-border: 280 20% 25%;
+    --section-recommendation: 160 25% 12%;
+    --section-recommendation-border: 160 20% 22%;
+
+    --summary-bg: 220 25% 13%;
+    --summary-border: 220 20% 22%;
+
+    --sidebar-background: 220 30% 6%;
+    --sidebar-foreground: 40 15% 95%;
+    --sidebar-primary: 38 92% 50%;
+    --sidebar-primary-foreground: 220 30% 12%;
+    --sidebar-accent: 220 25% 12%;
+    --sidebar-accent-foreground: 40 15% 95%;
+    --sidebar-border: 220 25% 14%;
+    --sidebar-ring: 38 92% 50%;
   }
 }
 
@@ -99,7 +125,35 @@ All colors MUST be HSL.
     @apply border-border;
   }
 
+  html {
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground antialiased;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  /* Smooth section transitions */
+  .section-expand {
+    @apply transition-all duration-300 ease-out;
+  }
+
+  /* Premium shadow for cards */
+  .shadow-premium {
+    box-shadow: 
+      0 1px 2px hsl(220 25% 12% / 0.04),
+      0 4px 12px hsl(220 25% 12% / 0.06),
+      0 12px 32px hsl(220 25% 12% / 0.04);
+  }
+
+  /* Subtle glow for focused elements */
+  .glow-accent {
+    box-shadow: 0 0 0 3px hsl(38 92% 50% / 0.15);
   }
 }
