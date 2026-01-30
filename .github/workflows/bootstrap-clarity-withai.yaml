@@ -69,6 +69,7 @@ jobs:
       hub_exists: ${{ steps.check-hub.outputs.exists }}
       spoke_exists: ${{ steps.check-spoke.outputs.exists }}
       spoke_registered: ${{ steps.check-registration.outputs.registered }}
+      connection_healthy: ${{ steps.check-registration.outputs.connection_healthy }}
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -111,12 +112,27 @@ jobs:
         if: steps.check-hub.outputs.exists == 'true'
         run: |
           echo "### Spoke Registration Check" >> $GITHUB_STEP_SUMMARY
+          
+          # Check if spoke secret exists
           if kubectl get secret ${{ env.SPOKE_CLUSTER }} -n argocd 2>/dev/null; then
-            echo "Spoke already registered in ArgoCD" >> $GITHUB_STEP_SUMMARY
-            echo "registered=true" >> $GITHUB_OUTPUT
+            echo "Spoke secret exists in ArgoCD" >> $GITHUB_STEP_SUMMARY
+            
+            # Verify connection actually works by checking ArgoCD cluster list
+            CLUSTER_STATUS=$(kubectl get secret ${{ env.SPOKE_CLUSTER }} -n argocd -o jsonpath='{.data.server}' | base64 -d 2>/dev/null)
+            
+            if [ -n "$CLUSTER_STATUS" ]; then
+              echo "Spoke cluster URL configured: (redacted)" >> $GITHUB_STEP_SUMMARY
+              echo "registered=true" >> $GITHUB_OUTPUT
+              echo "connection_healthy=true" >> $GITHUB_OUTPUT
+            else
+              echo "Spoke secret exists but may be misconfigured" >> $GITHUB_STEP_SUMMARY
+              echo "registered=true" >> $GITHUB_OUTPUT
+              echo "connection_healthy=false" >> $GITHUB_OUTPUT
+            fi
           else
             echo "Spoke NOT registered - will register" >> $GITHUB_STEP_SUMMARY
             echo "registered=false" >> $GITHUB_OUTPUT
+            echo "connection_healthy=false" >> $GITHUB_OUTPUT
           fi
 
   create-ecr:
@@ -151,10 +167,11 @@ jobs:
   register-spoke:
     name: "Register Spoke with ArgoCD"
     needs: [validate, verify-infrastructure]
+    # Only register if: spoke not registered OR connection unhealthy (and not skipped)
     if: |
       needs.verify-infrastructure.outputs.hub_exists == 'true' &&
       needs.verify-infrastructure.outputs.spoke_exists == 'true' &&
-      needs.verify-infrastructure.outputs.spoke_registered != 'true' &&
+      (needs.verify-infrastructure.outputs.spoke_registered != 'true' || needs.verify-infrastructure.outputs.connection_healthy != 'true') &&
       inputs.skip_spoke_registration != true
     runs-on: ubuntu-latest
     steps:
@@ -181,14 +198,27 @@ jobs:
 
       - name: Create ArgoCD Manager ServiceAccount on Spoke
         run: |
+          echo "Setting up ArgoCD manager on spoke cluster..."
+          
+          # Create namespace if not exists
           kubectl create namespace argocd-manager --dry-run=client -o yaml | kubectl apply -f -
+          
+          # Create service account if not exists
           kubectl create serviceaccount argocd-manager -n argocd-manager --dry-run=client -o yaml | kubectl apply -f -
           
-          # Delete existing ClusterRoleBinding if exists (roleRef is immutable)
-          kubectl delete clusterrolebinding argocd-manager-role-binding --ignore-not-found=true
+          # Check if ClusterRoleBinding exists and has correct config
+          EXISTING_ROLE=$(kubectl get clusterrolebinding argocd-manager-role-binding -o jsonpath='{.roleRef.name}' 2>/dev/null || echo "")
+          EXISTING_SA=$(kubectl get clusterrolebinding argocd-manager-role-binding -o jsonpath='{.subjects[0].name}' 2>/dev/null || echo "")
           
-          # Create fresh ClusterRoleBinding
-          cat <<EOF | kubectl apply -f -
+          if [ "$EXISTING_ROLE" == "cluster-admin" ] && [ "$EXISTING_SA" == "argocd-manager" ]; then
+            echo "ClusterRoleBinding already correctly configured - skipping recreation"
+          else
+            echo "ClusterRoleBinding needs to be created/updated"
+            # Delete existing if it exists (roleRef is immutable)
+            kubectl delete clusterrolebinding argocd-manager-role-binding --ignore-not-found=true
+            
+            # Create fresh ClusterRoleBinding
+            cat <<EOF | kubectl apply -f -
           apiVersion: rbac.authorization.k8s.io/v1
           kind: ClusterRoleBinding
           metadata:
@@ -202,6 +232,7 @@ jobs:
               name: argocd-manager
               namespace: argocd-manager
           EOF
+          fi
 
       - name: Generate Token
         id: token
