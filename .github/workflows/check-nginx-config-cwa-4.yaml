@@ -1,0 +1,44 @@
+# Check and fix NGINX Ingress Controller global config
+name: "🔧 cwa-4: Check NGINX Config"
+
+on:
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-west-2
+  SPOKE_CLUSTER: opsera-usw2-np
+
+jobs:
+  check-nginx:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Configure kubectl
+        run: aws eks update-kubeconfig --name ${{ env.SPOKE_CLUSTER }} --region ${{ env.AWS_REGION }}
+
+      - name: Check NGINX ConfigMap
+        run: |
+          echo "=== NGINX Ingress ConfigMap ==="
+          kubectl get configmap -n ingress-nginx
+          
+          echo ""
+          echo "=== ConfigMap Data ==="
+          kubectl get configmap nginx-configuration -n ingress-nginx -o yaml 2>/dev/null || \
+          kubectl get configmap ingress-nginx-controller -n ingress-nginx -o yaml 2>/dev/null || \
+          echo "ConfigMap not found with standard names"
+
+      - name: Check Ingress annotations
+        run: |
+          echo "=== Ingress in opsera-cwa-4-dev ==="
+          kubectl get ingress cwa-4 -n opsera-cwa-4-dev -o yaml
+
+      - name: Test with curl
+        run: |
+          echo "=== Testing HTTP endpoint ==="
+          curl -vI http://opsera-cwa-4-dev.agent.opsera.dev 2>&1 | head -30 || true
