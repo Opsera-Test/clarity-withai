@@ -20,7 +20,7 @@ commonLabels:
 images:
   - name: clarity-withai
     newName: 792373136340.dkr.ecr.us-east-1.amazonaws.com/opsera/clarity-withai
-    newTag: a12cc35-20260130175749
+    newTag: fd12fbf-20260130181031
 
 # Patches for DEV environment
 patches:
