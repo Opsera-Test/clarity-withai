@@ -124,19 +124,41 @@ jobs:
         env:
           SPOKE_ENDPOINT: ${{ needs.validate-prerequisites.outputs.spoke_endpoint }}
         run: |
-          NAME_EXISTS=$(kubectl get secret ${{ env.SPOKE_CLUSTER }} -n argocd 2>/dev/null && echo "true" || echo "false")
+          echo "Checking if spoke cluster is already registered in ArgoCD..."
+          echo "Looking for secret: ${{ env.SPOKE_CLUSTER }}"
+          
+          # Check by name
+          if kubectl get secret ${{ env.SPOKE_CLUSTER }} -n argocd > /dev/null 2>&1; then
+            NAME_EXISTS="true"
+            echo "Found cluster secret by name: ${{ env.SPOKE_CLUSTER }}"
+          else
+            NAME_EXISTS="false"
+            echo "Cluster secret not found by name"
+          fi
+          
+          # Check by URL if not found by name
           URL_EXISTS="false"
           if [ "$NAME_EXISTS" = "false" ]; then
+            echo "Checking all cluster secrets for matching endpoint: $SPOKE_ENDPOINT"
             CLUSTER_SECRETS=$(kubectl get secrets -n argocd -l argocd.argoproj.io/secret-type=cluster -o json 2>/dev/null || echo '{"items":[]}')
+            SECRET_COUNT=$(echo "$CLUSTER_SECRETS" | jq '.items | length')
+            echo "Found $SECRET_COUNT cluster secrets"
+            
             MATCHING=$(echo "$CLUSTER_SECRETS" | jq -r --arg endpoint "$SPOKE_ENDPOINT" '.items[] | select(.data.server != null) | .data.server | @base64d | select(. == $endpoint) | "found"' | head -1)
             if [ "$MATCHING" = "found" ]; then
               URL_EXISTS="true"
+              echo "Found matching cluster by URL"
             fi
           fi
+          
+          echo "DEBUG: NAME_EXISTS=$NAME_EXISTS, URL_EXISTS=$URL_EXISTS"
+          
           if [ "$NAME_EXISTS" = "true" ] || [ "$URL_EXISTS" = "true" ]; then
             echo "registered=true" >> $GITHUB_OUTPUT
+            echo "Spoke cluster IS registered in ArgoCD" >> $GITHUB_STEP_SUMMARY
           else
             echo "registered=false" >> $GITHUB_OUTPUT
+            echo "Spoke cluster is NOT registered in ArgoCD" >> $GITHUB_STEP_SUMMARY
           fi
 
       - name: Check Spoke Connection Health
@@ -166,13 +188,21 @@ jobs:
         run: |
           REGISTERED="${{ steps.check-registration.outputs.registered }}"
           HEALTHY="${{ steps.check-health.outputs.healthy }}"
+          
+          echo "DEBUG: REGISTERED=$REGISTERED, HEALTHY=$HEALTHY"
+          
+          # If not registered at all, need to register
           if [ "$REGISTERED" = "false" ]; then
             echo "needs_registration=true" >> $GITHUB_OUTPUT
+            echo "Spoke not registered - will register" >> $GITHUB_STEP_SUMMARY
+          # If registered but explicitly unhealthy, need to re-register
           elif [ "$HEALTHY" = "false" ]; then
             echo "needs_registration=true" >> $GITHUB_OUTPUT
+            echo "Spoke unhealthy - will re-register" >> $GITHUB_STEP_SUMMARY
+          # If registered and healthy (or health check passed/skipped with no issues)
           else
             echo "needs_registration=false" >> $GITHUB_OUTPUT
-            echo "Skip registration - spoke is healthy" >> $GITHUB_STEP_SUMMARY
+            echo "**SKIP**: Spoke is registered and healthy - skipping registration" >> $GITHUB_STEP_SUMMARY
           fi
 
   register-spoke:
