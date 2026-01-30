@@ -1,0 +1,12 @@
+# ════════════════════════════════════════════════════════════════════════════
+# DEV NAMESPACE
+# RULE 100: Tenant prefix in namespace name
+# ════════════════════════════════════════════════════════════════════════════
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: opsera-cwa-4-dev
+  labels:
+    app: cwa-4
+    environment: dev
+    tenant: opsera
