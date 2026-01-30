@@ -342,12 +342,67 @@ jobs:
           git push origin main
 
   # ════════════════════════════════════════════════════════════════════════════
+  # CREATE ECR PULL SECRET ON SPOKE (RULE 81)
+  # ════════════════════════════════════════════════════════════════════════════
+  create-ecr-pull-secret:
+    name: "🔑 Create ECR Pull Secret"
+    needs: [validate, create-ecr, verify-spoke]
+    if: always() && needs.validate.result == 'success' && needs.create-ecr.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Configure kubectl for Spoke
+        run: |
+          aws eks update-kubeconfig --name ${{ env.SPOKE_CLUSTER }} --region ${{ env.AWS_REGION }}
+
+      - name: Create ECR Pull Secret in Each Namespace
+        env:
+          ECR_URI: ${{ needs.validate.outputs.ecr_uri }}
+        run: |
+          # Get ECR login token
+          ECR_TOKEN=$(aws ecr get-login-password --region ${{ env.AWS_REGION }})
+          
+          ENVS="${{ inputs.environment }}"
+          if [ "$ENVS" = "all" ]; then
+            ENVS="dev qa staging"
+          fi
+
+          for env in $ENVS; do
+            NAMESPACE="${{ env.TENANT }}-${{ env.APP_NAME }}-${env}"
+            
+            # Create namespace if not exists
+            kubectl create namespace $NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
+            
+            # Create or update ECR pull secret
+            kubectl create secret docker-registry ecr-registry-secret \
+              --docker-server=${ECR_URI} \
+              --docker-username=AWS \
+              --docker-password="${ECR_TOKEN}" \
+              -n $NAMESPACE \
+              --dry-run=client -o yaml | kubectl apply -f -
+            
+            echo "✅ Created ECR pull secret in namespace: $NAMESPACE"
+          done
+
+          echo "### ECR Pull Secrets" >> $GITHUB_STEP_SUMMARY
+          echo "Created \`ecr-registry-secret\` in namespaces:" >> $GITHUB_STEP_SUMMARY
+          for env in $ENVS; do
+            echo "- \`${{ env.TENANT }}-${{ env.APP_NAME }}-${env}\`" >> $GITHUB_STEP_SUMMARY
+          done
+
+  # ════════════════════════════════════════════════════════════════════════════
   # APPLY ARGOCD APPLICATIONS
   # ════════════════════════════════════════════════════════════════════════════
   apply-argocd-apps:
     name: "🎯 Apply ArgoCD Applications"
-    needs: [validate, update-manifests, create-repo-secret]
-    if: always() && needs.update-manifests.result == 'success'
+    needs: [validate, update-manifests, create-repo-secret, create-ecr-pull-secret]
+    if: always() && needs.update-manifests.result == 'success' && needs.create-ecr-pull-secret.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
