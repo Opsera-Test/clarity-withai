@@ -10,7 +10,7 @@
 # 5. Validate GH_PAT before creating repo secret
 # ════════════════════════════════════════════════════════════════════════════
 
-name: "🚀 cwa-1: Bootstrap Infrastructure"
+name: "cwa-1: Bootstrap Infrastructure"
 
 on:
   workflow_dispatch:
