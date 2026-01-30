@@ -183,6 +183,11 @@ jobs:
         run: |
           kubectl create namespace argocd-manager --dry-run=client -o yaml | kubectl apply -f -
           kubectl create serviceaccount argocd-manager -n argocd-manager --dry-run=client -o yaml | kubectl apply -f -
+          
+          # Delete existing ClusterRoleBinding if exists (roleRef is immutable)
+          kubectl delete clusterrolebinding argocd-manager-role-binding --ignore-not-found=true
+          
+          # Create fresh ClusterRoleBinding
           cat <<EOF | kubectl apply -f -
           apiVersion: rbac.authorization.k8s.io/v1
           kind: ClusterRoleBinding
