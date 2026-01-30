@@ -19,7 +19,7 @@ commonLabels:
 # Image will be updated by CI/CD pipeline
 images:
   - name: clarity-withai
-    newName: PLACEHOLDER_ECR_REPO
+    newName: 792373136340.dkr.ecr.us-east-1.amazonaws.com/opsera/clarity-withai
     newTag: latest
 
 # Patches for DEV environment
