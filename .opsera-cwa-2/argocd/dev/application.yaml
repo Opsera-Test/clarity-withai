@@ -18,7 +18,7 @@ spec:
   project: default
 
   source:
-    repoURL: PLACEHOLDER_REPO_URL
+    repoURL: https://github.com/opsera-agentic/clarity-withai.git
     targetRevision: HEAD
     path: .opsera-cwa-2/k8s/overlays/dev
 
