@@ -1,0 +1,16 @@
+# ════════════════════════════════════════════════════════════════════════════
+# KUSTOMIZATION - Base configuration
+# ════════════════════════════════════════════════════════════════════════════
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - deployment.yaml
+  - service.yaml
+  - ingress.yaml
+
+commonLabels:
+  app.kubernetes.io/name: cwa-1
+  app.kubernetes.io/managed-by: argocd
+  tenant: opsera

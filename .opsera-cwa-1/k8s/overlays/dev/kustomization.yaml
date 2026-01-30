@@ -1,0 +1,38 @@
+# ════════════════════════════════════════════════════════════════════════════
+# KUSTOMIZATION - DEV Environment Overlay
+# RULE 99: Create all environment overlays before bootstrap
+# RULE 100: Use tenant variable consistently
+# ════════════════════════════════════════════════════════════════════════════
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: opsera-cwa-1-dev
+
+resources:
+  - ../../base
+  - namespace.yaml
+
+commonLabels:
+  environment: dev
+
+images:
+  - name: cwa-1
+    newName: PLACEHOLDER_ECR_URI
+    newTag: latest
+
+patches:
+  # Patch Ingress for DEV environment
+  - target:
+      kind: Ingress
+      name: cwa-1
+    patch: |-
+      - op: replace
+        path: /spec/rules/0/host
+        value: opsera-cwa-1-dev.agent.opsera.dev
+      - op: replace
+        path: /spec/tls/0/hosts/0
+        value: opsera-cwa-1-dev.agent.opsera.dev
+      - op: replace
+        path: /spec/tls/0/secretName
+        value: opsera-cwa-1-dev-tls

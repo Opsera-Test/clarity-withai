@@ -1,0 +1,44 @@
+# ════════════════════════════════════════════════════════════════════════════
+# ARGOCD APPLICATION - DEV Environment
+# RULE 59: Use destination.name for hub-spoke architecture (NOT destination.server)
+# RULE 79: Placeholder variables resolved before commit
+# ════════════════════════════════════════════════════════════════════════════
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cwa-1-dev
+  namespace: argocd
+  labels:
+    tenant: opsera
+    app: cwa-1
+    environment: dev
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/opsera-agentic/clarity-withai.git
+    targetRevision: HEAD
+    path: .opsera-cwa-1/k8s/overlays/dev
+
+  destination:
+    # CRITICAL (RULE 59): Use 'name' for spoke cluster, NOT 'server'
+    # This ensures deployment goes to the spoke cluster, not the hub
+    name: opsera-use1-np
+    namespace: opsera-cwa-1-dev
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - PruneLast=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
