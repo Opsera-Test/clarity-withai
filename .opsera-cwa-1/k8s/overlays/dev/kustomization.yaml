@@ -18,7 +18,7 @@ commonLabels:
 
 images:
   - name: cwa-1
-    newName: PLACEHOLDER_ECR_URI
+    newName: 792373136340.dkr.ecr.us-east-1.amazonaws.com/opsera/cwa-1
     newTag: latest
 
 patches:
