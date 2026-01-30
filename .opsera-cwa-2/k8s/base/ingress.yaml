@@ -1,0 +1,34 @@
+# ════════════════════════════════════════════════════════════════════════════
+# INGRESS - Base configuration with TLS
+# RULE 104: Use wildcard TLS certificate (opsera-wildcard-tls)
+# RULE 64: Domain is agent.opsera.dev (singular)
+# ════════════════════════════════════════════════════════════════════════════
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cwa-2
+  labels:
+    app: cwa-2
+    tenant: opsera
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - PLACEHOLDER_HOSTNAME
+      secretName: opsera-wildcard-tls
+  rules:
+    - host: PLACEHOLDER_HOSTNAME
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: cwa-2
+                port:
+                  number: 80

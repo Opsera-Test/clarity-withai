@@ -1,0 +1,21 @@
+# ════════════════════════════════════════════════════════════════════════════
+# SERVICE - ClusterIP for NGINX Ingress routing
+# RULE 23: Services MUST be ClusterIP (NOT LoadBalancer) for shared ingress
+# ════════════════════════════════════════════════════════════════════════════
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: cwa-2
+  labels:
+    app: cwa-2
+    tenant: opsera
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: 8080
+      protocol: TCP
+      name: http
+  selector:
+    app: cwa-2
