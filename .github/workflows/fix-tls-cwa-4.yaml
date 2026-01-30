@@ -1,0 +1,128 @@
+# Fix TLS by copying wildcard cert or debugging cert issue
+name: "🔧 cwa-4: Fix TLS Certificate"
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to take'
+        type: choice
+        options:
+          - check-cert-status
+          - copy-wildcard-cert
+          - delete-and-recreate-cert
+        default: check-cert-status
+
+env:
+  AWS_REGION: us-west-2
+  SPOKE_CLUSTER: opsera-usw2-np
+  APP_NAMESPACE: opsera-cwa-4-dev
+
+jobs:
+  fix-tls:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Configure kubectl
+        run: aws eks update-kubeconfig --name ${{ env.SPOKE_CLUSTER }} --region ${{ env.AWS_REGION }}
+
+      - name: Check Certificate Status
+        if: inputs.action == 'check-cert-status'
+        run: |
+          echo "=== Certificate Status ==="
+          kubectl describe certificate cwa-4-dev-tls -n ${{ env.APP_NAMESPACE }} 2>/dev/null || echo "Certificate not found"
+          
+          echo ""
+          echo "=== Certificate Request ==="
+          kubectl get certificaterequests -n ${{ env.APP_NAMESPACE }}
+          
+          echo ""
+          echo "=== Orders ==="
+          kubectl get orders -n ${{ env.APP_NAMESPACE }} 2>/dev/null || echo "No orders"
+          
+          echo ""
+          echo "=== Challenges ==="
+          kubectl get challenges -n ${{ env.APP_NAMESPACE }} 2>/dev/null || echo "No challenges"
+          
+          echo ""
+          echo "=== cert-manager logs (last 50 lines) ==="
+          kubectl logs -n cert-manager -l app=cert-manager --tail=50 2>/dev/null | grep -i "cwa-4\|error\|failed" || echo "No relevant logs"
+
+      - name: Copy Wildcard Certificate
+        if: inputs.action == 'copy-wildcard-cert'
+        run: |
+          echo "=== Finding wildcard cert in ingress-nginx ==="
+          WILDCARD_SECRET=$(kubectl get secrets -n ingress-nginx -o name | grep -i wildcard | head -1)
+          
+          if [ -z "$WILDCARD_SECRET" ]; then
+            echo "No wildcard secret found in ingress-nginx namespace"
+            exit 1
+          fi
+          
+          echo "Found: $WILDCARD_SECRET"
+          
+          # Check the secret type
+          SECRET_TYPE=$(kubectl get $WILDCARD_SECRET -n ingress-nginx -o jsonpath='{.type}')
+          echo "Secret type: $SECRET_TYPE"
+          
+          # Get the data keys
+          DATA_KEYS=$(kubectl get $WILDCARD_SECRET -n ingress-nginx -o jsonpath='{.data}' | jq -r 'keys[]')
+          echo "Data keys: $DATA_KEYS"
+          
+          # Delete existing cert/secret that cert-manager created
+          echo "=== Removing existing cert-manager objects ==="
+          kubectl delete certificate cwa-4-dev-tls -n ${{ env.APP_NAMESPACE }} 2>/dev/null || true
+          kubectl delete secret cwa-4-dev-tls -n ${{ env.APP_NAMESPACE }} 2>/dev/null || true
+          
+          # Also remove the annotation so cert-manager doesn't recreate
+          kubectl annotate ingress cwa-4 -n ${{ env.APP_NAMESPACE }} cert-manager.io/cluster-issuer- 2>/dev/null || true
+          
+          # Extract the secret data (handles both tls.crt/tls.key and cert/key formats)
+          if kubectl get $WILDCARD_SECRET -n ingress-nginx -o jsonpath='{.data.tls\.crt}' 2>/dev/null | base64 -d > /tmp/tls.crt 2>/dev/null; then
+            kubectl get $WILDCARD_SECRET -n ingress-nginx -o jsonpath='{.data.tls\.key}' | base64 -d > /tmp/tls.key
+          elif kubectl get $WILDCARD_SECRET -n ingress-nginx -o jsonpath='{.data.cert}' 2>/dev/null | base64 -d > /tmp/tls.crt 2>/dev/null; then
+            kubectl get $WILDCARD_SECRET -n ingress-nginx -o jsonpath='{.data.key}' | base64 -d > /tmp/tls.key
+          else
+            echo "Could not extract TLS data from secret"
+            # Try to see what's actually in the secret
+            kubectl get $WILDCARD_SECRET -n ingress-nginx -o yaml
+            exit 1
+          fi
+          
+          echo "=== Creating TLS secret in app namespace ==="
+          kubectl create secret tls cwa-4-dev-tls \
+            --cert=/tmp/tls.crt \
+            --key=/tmp/tls.key \
+            -n ${{ env.APP_NAMESPACE }} \
+            --dry-run=client -o yaml | kubectl apply -f -
+          
+          echo "=== Verifying ==="
+          kubectl get secret cwa-4-dev-tls -n ${{ env.APP_NAMESPACE }}
+
+      - name: Delete and Recreate Certificate
+        if: inputs.action == 'delete-and-recreate-cert'
+        run: |
+          echo "=== Deleting existing certificate ==="
+          kubectl delete certificate cwa-4-dev-tls -n ${{ env.APP_NAMESPACE }} 2>/dev/null || true
+          kubectl delete secret cwa-4-dev-tls -n ${{ env.APP_NAMESPACE }} 2>/dev/null || true
+          kubectl delete certificaterequest -n ${{ env.APP_NAMESPACE }} --all 2>/dev/null || true
+          kubectl delete order -n ${{ env.APP_NAMESPACE }} --all 2>/dev/null || true
+          kubectl delete challenge -n ${{ env.APP_NAMESPACE }} --all 2>/dev/null || true
+          
+          echo "=== Waiting 10s ==="
+          sleep 10
+          
+          echo "=== Triggering ingress reconciliation ==="
+          kubectl annotate ingress cwa-4 -n ${{ env.APP_NAMESPACE }} \
+            cert-manager.io/issue-temporary-certificate=true --overwrite || true
+          
+          echo "=== Checking new certificate status ==="
+          sleep 30
+          kubectl get certificates -n ${{ env.APP_NAMESPACE }}
+          kubectl get certificaterequests -n ${{ env.APP_NAMESPACE }}
