@@ -30,6 +30,9 @@ patches:
       - op: replace
         path: /spec/tls/0/hosts/0
         value: opsera-cwa-4-dev.agent.opsera.dev
+      - op: replace
+        path: /spec/tls/0/secretName
+        value: cwa-4-dev-tls
 
   - target:
       kind: Deployment
