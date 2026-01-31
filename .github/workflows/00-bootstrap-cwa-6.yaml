@@ -4,7 +4,7 @@
 # Generated: 2026-01-30
 # ════════════════════════════════════════════════════════════════════════════
 
-name: "🚀 cwa-6: Bootstrap Infrastructure"
+name: "00-bootstrap-cwa-6"
 
 on:
   workflow_dispatch:
