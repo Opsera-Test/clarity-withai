@@ -1,0 +1,180 @@
+# ════════════════════════════════════════════════════════════════════════════
+# QUICK BOOTSTRAP - Simplified bootstrap for cwa-5
+# Follows the same path as cwa-4 but with direct NLB
+# ════════════════════════════════════════════════════════════════════════════
+
+name: "⚡ cwa-5: Quick Bootstrap"
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/quick-bootstrap-cwa-5.yaml'
+  workflow_dispatch:
+
+env:
+  APP_NAME: cwa-5
+  TENANT: opsera
+  AWS_REGION: us-west-2
+  HUB_CLUSTER: argocd-usw2
+  SPOKE_CLUSTER: opsera-usw2-np
+  ECR_REPO: opsera/cwa-5
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  bootstrap:
+    name: "⚡ Quick Bootstrap"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get AWS Account ID
+        id: aws
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          echo "account_id=${ACCOUNT_ID}" >> $GITHUB_OUTPUT
+          ECR_URI="${ACCOUNT_ID}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com"
+          echo "ecr_uri=${ECR_URI}" >> $GITHUB_OUTPUT
+          echo "### AWS Info" >> $GITHUB_STEP_SUMMARY
+          echo "- Account: \`${ACCOUNT_ID}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- ECR URI: \`${ECR_URI}\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Create ECR Repository
+        run: |
+          echo "### ECR Repository" >> $GITHUB_STEP_SUMMARY
+          if aws ecr describe-repositories --repository-names "${{ env.ECR_REPO }}" 2>/dev/null; then
+            echo "✅ ECR repository already exists" >> $GITHUB_STEP_SUMMARY
+          else
+            aws ecr create-repository \
+              --repository-name "${{ env.ECR_REPO }}" \
+              --image-scanning-configuration scanOnPush=true \
+              --tags Key=tenant,Value=${{ env.TENANT }} Key=app,Value=${{ env.APP_NAME }}
+            echo "✅ ECR repository created: \`${{ env.ECR_REPO }}\`" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Verify Spoke Cluster
+        run: |
+          echo "### Spoke Cluster" >> $GITHUB_STEP_SUMMARY
+          if aws eks describe-cluster --name ${{ env.SPOKE_CLUSTER }} 2>/dev/null; then
+            echo "✅ Spoke cluster exists: \`${{ env.SPOKE_CLUSTER }}\`" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Spoke cluster NOT found" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+
+      - name: Configure kubectl for Hub
+        run: |
+          aws eks update-kubeconfig --name ${{ env.HUB_CLUSTER }} --region ${{ env.AWS_REGION }}
+
+      - name: Create ArgoCD Repo Secret
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          SECRET_NAME="repo-${{ env.APP_NAME }}"
+          REPO_URL="https://github.com/${{ github.repository }}.git"
+          
+          echo "### ArgoCD Repo Secret" >> $GITHUB_STEP_SUMMARY
+          
+          if kubectl get secret "${SECRET_NAME}" -n argocd 2>/dev/null; then
+            echo "✅ Repo secret already exists" >> $GITHUB_STEP_SUMMARY
+          else
+            kubectl create secret generic "${SECRET_NAME}" -n argocd \
+              --from-literal=type=git \
+              --from-literal=url="${REPO_URL}" \
+              --from-literal=username=git \
+              --from-literal=password="${GH_PAT}"
+            
+            kubectl label secret "${SECRET_NAME}" -n argocd \
+              argocd.argoproj.io/secret-type=repository
+            
+            echo "✅ Repo secret created: \`${SECRET_NAME}\`" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Update Manifests with ECR URI
+        env:
+          ECR_URI: ${{ steps.aws.outputs.ecr_uri }}
+        run: |
+          REPO_URL="https://github.com/${{ github.repository }}.git"
+          
+          # Update kustomization with ECR URI
+          sed -i "s|PLACEHOLDER_ECR_URI|${ECR_URI}|g" \
+            .opsera-${{ env.APP_NAME }}/k8s/overlays/dev/kustomization.yaml || true
+          
+          # Update ArgoCD application with repo URL
+          sed -i "s|PLACEHOLDER_REPO_URL|${REPO_URL}|g" \
+            .opsera-${{ env.APP_NAME }}/argocd/dev/application.yaml || true
+          
+          # Commit if there are changes
+          git add .opsera-${{ env.APP_NAME }}/
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: Update ${{ env.APP_NAME }} manifests with ECR URI [skip ci]"
+            git pull --rebase origin main
+            git push origin main
+          fi
+          
+          echo "### Manifests Updated" >> $GITHUB_STEP_SUMMARY
+          echo "- ECR URI: \`${ECR_URI}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Repo URL: \`${REPO_URL}\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Pull Latest Changes
+        run: |
+          git pull --rebase origin main
+
+      - name: Apply ArgoCD Application
+        run: |
+          echo "### ArgoCD Application" >> $GITHUB_STEP_SUMMARY
+          
+          kubectl apply -f .opsera-${{ env.APP_NAME }}/argocd/dev/application.yaml
+          
+          sleep 5
+          
+          SYNC_STATUS=$(kubectl get application ${{ env.APP_NAME }}-dev -n argocd \
+            -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
+          
+          echo "✅ ArgoCD application applied" >> $GITHUB_STEP_SUMMARY
+          echo "- Name: \`${{ env.APP_NAME }}-dev\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Sync Status: \`${SYNC_STATUS}\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Summary
+        run: |
+          cat << 'EOF' >> $GITHUB_STEP_SUMMARY
+          
+          ---
+          
+          ## ✅ Bootstrap Complete!
+          
+          ### Next Steps
+          
+          1. **Build & Deploy:**
+             ```bash
+             gh workflow run "ci-build-push-cwa-5.yaml"
+             ```
+          
+          2. **Get ELB Endpoint:**
+             ```bash
+             gh workflow run "get-elb-endpoint-cwa-5.yaml" -f environment=dev
+             ```
+          
+          3. **Check Diagnostics:**
+             ```bash
+             gh workflow run "diagnostics-cwa-5.yaml" -f environment=dev
+             ```
+          EOF
