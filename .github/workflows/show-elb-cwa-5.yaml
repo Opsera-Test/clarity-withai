@@ -1,0 +1,61 @@
+# Quick workflow to show ELB endpoint
+name: "📍 cwa-5: Show ELB"
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/show-elb-cwa-5.yaml'
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-west-2
+  SPOKE_CLUSTER: opsera-usw2-np
+  NAMESPACE: opsera-cwa-5-dev
+
+jobs:
+  show-elb:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Configure kubectl
+        run: aws eks update-kubeconfig --name ${{ env.SPOKE_CLUSTER }} --region ${{ env.AWS_REGION }}
+
+      - name: Show Service and ELB
+        run: |
+          echo "=== SERVICE STATUS ==="
+          kubectl get svc -n ${{ env.NAMESPACE }}
+          
+          echo ""
+          echo "=== SERVICE DETAILS ==="
+          kubectl get svc cwa-5 -n ${{ env.NAMESPACE }} -o wide
+          
+          echo ""
+          echo "=== LOADBALANCER ENDPOINT ==="
+          LB=$(kubectl get svc cwa-5 -n ${{ env.NAMESPACE }} -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+          echo "ELB Hostname: $LB"
+          
+          if [ -n "$LB" ] && [ "$LB" != "null" ]; then
+            echo ""
+            echo "========================================="
+            echo "🎉 YOUR APPLICATION URL:"
+            echo "http://${LB}"
+            echo "========================================="
+          else
+            echo "LoadBalancer not yet provisioned"
+            echo ""
+            echo "=== SERVICE YAML ==="
+            kubectl get svc cwa-5 -n ${{ env.NAMESPACE }} -o yaml
+          fi
+
+      - name: Show Pods
+        run: |
+          echo ""
+          echo "=== POD STATUS ==="
+          kubectl get pods -n ${{ env.NAMESPACE }} -o wide
