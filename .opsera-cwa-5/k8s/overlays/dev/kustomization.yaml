@@ -17,7 +17,7 @@ commonLabels:
 images:
   - name: cwa-5
     newName: 792373136340.dkr.ecr.us-west-2.amazonaws.com/opsera/cwa-5
-    newTag: latest
+    newTag: 21f886a-20260131002336
 
 replicas:
   - name: cwa-5
