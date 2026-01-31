@@ -197,7 +197,7 @@ jobs:
           git push origin main
 
   # ════════════════════════════════════════════════════════════════════════════
-  # SYNC & MONITOR
+  # SYNC & MONITOR - Deep Logging Version
   # ════════════════════════════════════════════════════════════════════════════
   sync-and-monitor:
     name: "🔄 Sync & Monitor"
@@ -217,52 +217,247 @@ jobs:
       - name: Configure kubectl for Hub
         run: |
           aws eks update-kubeconfig --name ${{ env.HUB_CLUSTER }} --region ${{ env.AWS_REGION }}
+          echo "✅ Connected to hub cluster: ${{ env.HUB_CLUSTER }}"
 
-      - name: Force ArgoCD Sync (RULE 66)
+      - name: "🔍 ArgoCD Pre-Sync Status"
         run: |
           ENV="${{ needs.verify-bootstrap.outputs.environment }}"
           APP="${{ env.APP_NAME }}-${ENV}"
 
+          echo "═══════════════════════════════════════════════════════════════"
+          echo "📊 ARGOCD APPLICATION STATUS (BEFORE SYNC)"
+          echo "═══════════════════════════════════════════════════════════════"
+
+          echo ""
+          echo "### Checking if application exists..."
+          if kubectl get application ${APP} -n argocd &>/dev/null; then
+            echo "✅ Application ${APP} exists"
+          else
+            echo "❌ Application ${APP} NOT FOUND!"
+            echo "Available applications:"
+            kubectl get applications -n argocd -o wide || echo "No applications found"
+            exit 1
+          fi
+
+          echo ""
+          echo "### Application YAML:"
+          kubectl get application ${APP} -n argocd -o yaml
+
+          echo ""
+          echo "### Application Status Summary:"
+          kubectl get application ${APP} -n argocd -o jsonpath='
+          App: {.metadata.name}
+          Sync Status: {.status.sync.status}
+          Health: {.status.health.status}
+          Source Repo: {.spec.source.repoURL}
+          Source Path: {.spec.source.path}
+          Destination: {.spec.destination.name}
+          Namespace: {.spec.destination.namespace}
+          ' && echo ""
+
+          echo ""
+          echo "### Sync Conditions:"
+          kubectl get application ${APP} -n argocd -o jsonpath='{.status.conditions[*]}' | jq . 2>/dev/null || echo "No conditions"
+
+          echo ""
+          echo "### Resource Status:"
+          kubectl get application ${APP} -n argocd -o jsonpath='{.status.resources[*]}' | jq . 2>/dev/null || echo "No resources"
+
+      - name: "🔄 Force ArgoCD Sync (RULE 66)"
+        run: |
+          ENV="${{ needs.verify-bootstrap.outputs.environment }}"
+          APP="${{ env.APP_NAME }}-${ENV}"
+
+          echo "═══════════════════════════════════════════════════════════════"
+          echo "🔄 TRIGGERING ARGOCD SYNC"
+          echo "═══════════════════════════════════════════════════════════════"
+
+          echo ""
+          echo "### Triggering hard refresh..."
           kubectl annotate application ${APP} -n argocd \
             argocd.argoproj.io/refresh=hard --overwrite
-          echo "✅ Sync triggered for ${APP}"
+
+          echo ""
+          echo "### Waiting 10s for sync to start..."
+          sleep 10
+
+          echo ""
+          echo "### Post-refresh status:"
+          kubectl get application ${APP} -n argocd -o jsonpath='
+          Sync Status: {.status.sync.status}
+          Health: {.status.health.status}
+          Operation State: {.status.operationState.phase}
+          Message: {.status.operationState.message}
+          ' && echo ""
+
+      - name: "🔍 ArgoCD Post-Sync Status"
+        run: |
+          ENV="${{ needs.verify-bootstrap.outputs.environment }}"
+          APP="${{ env.APP_NAME }}-${ENV}"
+
+          echo "═══════════════════════════════════════════════════════════════"
+          echo "📊 ARGOCD APPLICATION STATUS (AFTER SYNC TRIGGER)"
+          echo "═══════════════════════════════════════════════════════════════"
+
+          echo ""
+          echo "### Waiting additional 20s for sync to process..."
+          sleep 20
+
+          echo ""
+          echo "### Current Status:"
+          kubectl get application ${APP} -n argocd -o wide
+
+          echo ""
+          echo "### Sync Status Details:"
+          SYNC_STATUS=$(kubectl get application ${APP} -n argocd -o jsonpath='{.status.sync.status}')
+          HEALTH_STATUS=$(kubectl get application ${APP} -n argocd -o jsonpath='{.status.health.status}')
+          echo "Sync: ${SYNC_STATUS}"
+          echo "Health: ${HEALTH_STATUS}"
+
+          echo ""
+          echo "### Operation State:"
+          kubectl get application ${APP} -n argocd -o jsonpath='{.status.operationState}' | jq . 2>/dev/null || echo "No operation state"
+
+          echo ""
+          echo "### Resources Managed by ArgoCD:"
+          kubectl get application ${APP} -n argocd -o jsonpath='{range .status.resources[*]}{.kind}/{.name}: {.status} ({.health.status}){"\n"}{end}' 2>/dev/null || echo "No resources listed"
+
+          echo ""
+          echo "### Sync Result:"
+          kubectl get application ${APP} -n argocd -o jsonpath='{.status.sync}' | jq . 2>/dev/null || echo "No sync result"
 
       - name: Configure kubectl for Spoke
         run: |
           aws eks update-kubeconfig --name ${{ env.SPOKE_CLUSTER }} --region ${{ env.AWS_REGION }}
+          echo "✅ Connected to spoke cluster: ${{ env.SPOKE_CLUSTER }}"
 
-      - name: Wait for Deployment
+      - name: "🔍 Namespace & Resources Check"
+        run: |
+          ENV="${{ needs.verify-bootstrap.outputs.environment }}"
+          NAMESPACE="${{ env.TENANT }}-${{ env.APP_NAME }}-${ENV}"
+
+          echo "═══════════════════════════════════════════════════════════════"
+          echo "📊 NAMESPACE & KUBERNETES RESOURCES"
+          echo "═══════════════════════════════════════════════════════════════"
+
+          echo ""
+          echo "### Checking namespace: ${NAMESPACE}"
+          if kubectl get namespace ${NAMESPACE} &>/dev/null; then
+            echo "✅ Namespace exists"
+            kubectl get namespace ${NAMESPACE} -o yaml
+          else
+            echo "❌ Namespace ${NAMESPACE} does NOT exist!"
+            echo ""
+            echo "### All namespaces:"
+            kubectl get namespaces | grep -E "(opsera|clarity)" || echo "No matching namespaces"
+          fi
+
+          echo ""
+          echo "### All resources in namespace:"
+          kubectl get all -n ${NAMESPACE} 2>/dev/null || echo "No resources found or namespace doesn't exist"
+
+          echo ""
+          echo "### Deployments:"
+          kubectl get deployments -n ${NAMESPACE} -o wide 2>/dev/null || echo "No deployments"
+
+          echo ""
+          echo "### Pods:"
+          kubectl get pods -n ${NAMESPACE} -o wide 2>/dev/null || echo "No pods"
+
+          echo ""
+          echo "### Services:"
+          kubectl get services -n ${NAMESPACE} -o wide 2>/dev/null || echo "No services"
+
+          echo ""
+          echo "### Ingress:"
+          kubectl get ingress -n ${NAMESPACE} -o wide 2>/dev/null || echo "No ingress"
+
+          echo ""
+          echo "### Events (last 20):"
+          kubectl get events -n ${NAMESPACE} --sort-by='.lastTimestamp' 2>/dev/null | tail -20 || echo "No events"
+
+      - name: "⏳ Wait for Deployment"
         id: wait
         timeout-minutes: 10
         run: |
           ENV="${{ needs.verify-bootstrap.outputs.environment }}"
           NAMESPACE="${{ env.TENANT }}-${{ env.APP_NAME }}-${ENV}"
 
+          echo "═══════════════════════════════════════════════════════════════"
+          echo "⏳ WAITING FOR DEPLOYMENT"
+          echo "═══════════════════════════════════════════════════════════════"
+          echo "Namespace: ${NAMESPACE}"
+          echo "App Label: app=${{ env.APP_NAME }}"
+
           # RULE 43: Environment-aware timeouts
           case "$ENV" in
             dev) TIMEOUT=300 ;;
             qa|staging) TIMEOUT=600 ;;
+            *) TIMEOUT=300 ;;
           esac
+          echo "Timeout: ${TIMEOUT}s"
 
           ELAPSED=0
           while [ $ELAPSED -lt $TIMEOUT ]; do
-            READY=$(kubectl get pods -n $NAMESPACE -l app=${{ env.APP_NAME }} \
-              -o jsonpath='{.items[*].status.phase}' 2>/dev/null | tr ' ' '\n' | grep -c Running || echo 0)
-            TOTAL=$(kubectl get pods -n $NAMESPACE -l app=${{ env.APP_NAME }} --no-headers 2>/dev/null | wc -l || echo 0)
+            echo ""
+            echo "--- Check at ${ELAPSED}s ---"
 
-            echo "Pods: $READY/$TOTAL ready (${ELAPSED}s elapsed)"
+            # Check if namespace exists
+            if ! kubectl get namespace ${NAMESPACE} &>/dev/null; then
+              echo "⚠️ Namespace ${NAMESPACE} does not exist yet"
+              sleep 15
+              ELAPSED=$((ELAPSED + 15))
+              continue
+            fi
 
-            if [ "$TOTAL" -gt 0 ] && [ "$READY" -eq "$TOTAL" ]; then
-              echo "✅ Deployment ready"
+            # Get pod info with safer handling
+            POD_INFO=$(kubectl get pods -n ${NAMESPACE} -l app=${{ env.APP_NAME }} --no-headers 2>/dev/null || echo "")
+
+            if [ -z "$POD_INFO" ]; then
+              echo "⚠️ No pods found with label app=${{ env.APP_NAME }}"
+              echo "Checking all pods in namespace:"
+              kubectl get pods -n ${NAMESPACE} --no-headers 2>/dev/null || echo "No pods at all"
+              TOTAL=0
+              READY=0
+            else
+              echo "Pod info:"
+              echo "$POD_INFO"
+              TOTAL=$(echo "$POD_INFO" | wc -l | tr -d ' ')
+              READY=$(echo "$POD_INFO" | grep -c "Running" || echo "0")
+            fi
+
+            echo "Pods: ${READY}/${TOTAL} ready"
+
+            # Safe numeric comparison
+            if [ "${TOTAL:-0}" -gt 0 ] && [ "${READY:-0}" -eq "${TOTAL:-0}" ]; then
+              echo ""
+              echo "✅ All pods are running!"
               echo "success=true" >> $GITHUB_OUTPUT
               exit 0
+            fi
+
+            # Show pod details if pods exist but not ready
+            if [ "${TOTAL:-0}" -gt 0 ]; then
+              echo ""
+              echo "Pod details:"
+              kubectl describe pods -n ${NAMESPACE} -l app=${{ env.APP_NAME }} 2>/dev/null | head -100 || true
             fi
 
             sleep 15
             ELAPSED=$((ELAPSED + 15))
           done
 
-          echo "⚠️ Deployment timeout - check diagnostics"
+          echo ""
+          echo "═══════════════════════════════════════════════════════════════"
+          echo "❌ DEPLOYMENT TIMEOUT"
+          echo "═══════════════════════════════════════════════════════════════"
+          echo ""
+          echo "### Final state - All resources:"
+          kubectl get all -n ${NAMESPACE} 2>/dev/null || echo "Namespace may not exist"
+          echo ""
+          echo "### Final state - Events:"
+          kubectl get events -n ${NAMESPACE} --sort-by='.lastTimestamp' 2>/dev/null | tail -30 || echo "No events"
+
           echo "success=false" >> $GITHUB_OUTPUT
 
   # ════════════════════════════════════════════════════════════════════════════
