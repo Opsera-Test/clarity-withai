@@ -22,7 +22,7 @@ replicas:
 
 images:
   - name: clarity-withai-1
-    newName: PLACEHOLDER_ECR_URI/opsera/clarity-withai-1
+    newName: 792373136340.dkr.ecr.us-west-2.amazonaws.com/opsera/clarity-withai-1
     newTag: latest
 
 patches:
