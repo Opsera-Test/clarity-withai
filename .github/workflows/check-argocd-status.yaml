@@ -1,0 +1,77 @@
+name: "🔍 Check ArgoCD Status"
+
+on:
+  workflow_dispatch:
+
+env:
+  APP_NAME: 1cwa
+  AWS_REGION: us-west-2
+  HUB_CLUSTER: argocd-usw2
+  SPOKE_CLUSTER: opsera-usw2-np
+
+jobs:
+  check-argocd:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Configure kubectl for Hub
+        run: |
+          aws eks update-kubeconfig --name ${{ env.HUB_CLUSTER }} --region ${{ env.AWS_REGION }}
+
+      - name: Check Repository Secret (GH_PAT)
+        run: |
+          echo "### 🔑 Repository Secret Status" >> $GITHUB_STEP_SUMMARY
+          if kubectl get secret repo-${{ env.APP_NAME }} -n argocd 2>/dev/null; then
+            echo "✅ Repository secret exists" >> $GITHUB_STEP_SUMMARY
+            kubectl get secret repo-${{ env.APP_NAME }} -n argocd -o yaml | grep -E "type:|url:" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Repository secret NOT found" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Check Spoke Cluster Registration
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔗 Spoke Cluster Registration" >> $GITHUB_STEP_SUMMARY
+          if kubectl get secret cluster-${{ env.SPOKE_CLUSTER }} -n argocd 2>/dev/null; then
+            echo "✅ Spoke cluster registered: ${{ env.SPOKE_CLUSTER }}" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Spoke cluster NOT registered" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Check ArgoCD Application Status
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 ArgoCD Application Status" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          kubectl get application ${{ env.APP_NAME }}-dev -n argocd -o yaml 2>&1 >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Check ArgoCD Application Conditions
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ⚠️ Application Conditions (Errors)" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          kubectl get application ${{ env.APP_NAME }}-dev -n argocd -o jsonpath='{.status.conditions}' 2>&1 | jq . >> $GITHUB_STEP_SUMMARY || echo "No conditions"
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: List All ArgoCD Clusters
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🌐 Registered Clusters" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          kubectl get secrets -n argocd -l argocd.argoproj.io/secret-type=cluster -o custom-columns=NAME:.metadata.name,CLUSTER:.data.name 2>&1 >> $GITHUB_STEP_SUMMARY || echo "No clusters"
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: List All ArgoCD Repositories
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📁 Registered Repositories" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          kubectl get secrets -n argocd -l argocd.argoproj.io/secret-type=repository -o custom-columns=NAME:.metadata.name 2>&1 >> $GITHUB_STEP_SUMMARY || echo "No repositories"
+          echo '```' >> $GITHUB_STEP_SUMMARY
