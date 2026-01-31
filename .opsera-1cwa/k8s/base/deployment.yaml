@@ -18,9 +18,7 @@ spec:
       labels:
         app: 1cwa
     spec:
-      # RULE 81: imagePullSecrets required for private ECR
-      imagePullSecrets:
-        - name: ecr-registry-secret
+      # Note: EKS nodes pull from ECR via IAM roles - no imagePullSecret needed
       containers:
         - name: 1cwa
           image: 1cwa:latest
