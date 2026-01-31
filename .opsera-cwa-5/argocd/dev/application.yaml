@@ -18,7 +18,7 @@ spec:
 
   source:
     # Will be updated by bootstrap workflow with actual repo URL
-    repoURL: PLACEHOLDER_REPO_URL
+    repoURL: https://github.com/opsera-agentic/clarity-withai.git
     targetRevision: HEAD
     path: .opsera-cwa-5/k8s/overlays/dev
 

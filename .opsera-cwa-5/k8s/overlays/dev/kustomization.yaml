@@ -16,7 +16,7 @@ commonLabels:
 # Image will be updated by CI/CD pipeline
 images:
   - name: cwa-5
-    newName: PLACEHOLDER_ECR_URI/opsera/cwa-5
+    newName: 792373136340.dkr.ecr.us-west-2.amazonaws.com/opsera/cwa-5
     newTag: latest
 
 replicas:
