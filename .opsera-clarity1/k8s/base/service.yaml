@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: clarity1
+  labels:
+    app: clarity1
+    tenant: opsera
+spec:
+  # RULE 23: ClusterIP for shared NGINX Ingress pattern
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: 8080
+      protocol: TCP
+      name: http
+  selector:
+    app: clarity1

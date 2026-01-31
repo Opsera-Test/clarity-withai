@@ -1,0 +1,41 @@
+# ════════════════════════════════════════════════════════════════════════════
+# ARGOCD APPLICATION - QA Environment (Canary Deployment)
+# RULE 59: Use destination.name for spoke cluster, NOT destination.server
+# ════════════════════════════════════════════════════════════════════════════
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: clarity1-qa
+  namespace: argocd
+  labels:
+    app: clarity1
+    environment: qa
+    tenant: opsera
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: PLACEHOLDER_REPO_URL
+    targetRevision: HEAD
+    path: .opsera-clarity1/k8s/overlays/qa
+
+  destination:
+    # CRITICAL (RULE 59): Use 'name' for spoke cluster, NOT 'server'
+    name: opsera-use1-np
+    namespace: opsera-clarity1-qa
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m

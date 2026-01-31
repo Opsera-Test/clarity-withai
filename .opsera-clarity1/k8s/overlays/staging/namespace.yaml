@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: opsera-clarity1-staging
+  labels:
+    app: clarity1
+    environment: staging
+    tenant: opsera
