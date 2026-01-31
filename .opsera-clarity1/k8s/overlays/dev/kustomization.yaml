@@ -22,7 +22,7 @@ labels:
 images:
   - name: clarity1
     newName: 792373136340.dkr.ecr.us-west-2.amazonaws.com/opsera/clarity1
-    newTag: 6249e9a-20260131224147
+    newTag: 03371c9-20260131224838
 
 patches:
   # Patch Ingress with environment-specific hostname
