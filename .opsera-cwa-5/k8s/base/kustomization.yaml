@@ -1,0 +1,18 @@
+# ════════════════════════════════════════════════════════════════════════════
+# KUSTOMIZATION - Base resources (Direct NLB - No Ingress)
+# ════════════════════════════════════════════════════════════════════════════
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: cwa-5-base
+
+commonLabels:
+  app: cwa-5
+  tenant: opsera
+  managed-by: opsera-code-to-cloud
+
+resources:
+  - deployment.yaml
+  - service.yaml
+  # Ingress removed - using direct NLB attachment

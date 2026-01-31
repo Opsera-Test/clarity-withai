@@ -1,0 +1,66 @@
+# ════════════════════════════════════════════════════════════════════════════
+# DEPLOYMENT - Base Kubernetes Deployment
+# ════════════════════════════════════════════════════════════════════════════
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cwa-5
+  labels:
+    app: cwa-5
+    tenant: opsera
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: cwa-5
+  template:
+    metadata:
+      labels:
+        app: cwa-5
+        tenant: opsera
+    spec:
+      # RULE 81: imagePullSecrets required for private ECR
+      imagePullSecrets:
+        - name: ecr-registry-secret
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        fsGroup: 101
+      containers:
+        - name: cwa-5
+          image: cwa-5:latest  # Replaced by Kustomize
+          # RULE 80: imagePullPolicy Always required for Argo Rollouts
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+          # RULE 79: SPA health check is "/" not "/health"
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL

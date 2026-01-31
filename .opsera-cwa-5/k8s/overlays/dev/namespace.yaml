@@ -1,0 +1,13 @@
+# ════════════════════════════════════════════════════════════════════════════
+# NAMESPACE - DEV Environment
+# RULE 100: Use tenant prefix pattern: {tenant}-{app}-{env}
+# ════════════════════════════════════════════════════════════════════════════
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: opsera-cwa-5-dev
+  labels:
+    app: cwa-5
+    environment: dev
+    tenant: opsera
+    managed-by: opsera-code-to-cloud

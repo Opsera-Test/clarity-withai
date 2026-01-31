@@ -1,0 +1,24 @@
+# ════════════════════════════════════════════════════════════════════════════
+# KUSTOMIZATION - DEV Environment Overlay (Direct NLB)
+# ════════════════════════════════════════════════════════════════════════════
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: opsera-cwa-5-dev
+
+resources:
+  - ../../base
+  - namespace.yaml
+
+commonLabels:
+  environment: dev
+
+# Image will be updated by CI/CD pipeline
+images:
+  - name: cwa-5
+    newName: PLACEHOLDER_ECR_URI/opsera/cwa-5
+    newTag: latest
+
+replicas:
+  - name: cwa-5
+    count: 2

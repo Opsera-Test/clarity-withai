@@ -1,0 +1,43 @@
+# ════════════════════════════════════════════════════════════════════════════
+# ARGOCD APPLICATION - DEV Environment
+# RULE 59: MUST use destination.name (NOT destination.server) for hub-spoke
+# ════════════════════════════════════════════════════════════════════════════
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cwa-5-dev
+  namespace: argocd
+  labels:
+    tenant: opsera
+    app: cwa-5
+    environment: dev
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    # Will be updated by bootstrap workflow with actual repo URL
+    repoURL: PLACEHOLDER_REPO_URL
+    targetRevision: HEAD
+    path: .opsera-cwa-5/k8s/overlays/dev
+
+  destination:
+    # RULE 59: CRITICAL - Use 'name' for spoke cluster, NOT 'server'
+    # This ensures deployment goes to spoke cluster, not hub
+    name: opsera-usw2-np
+    namespace: opsera-cwa-5-dev
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - PruneLast=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
