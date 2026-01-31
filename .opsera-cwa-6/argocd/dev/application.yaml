@@ -1,0 +1,34 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cwa-6-dev
+  namespace: argocd
+  labels:
+    tenant: opsera
+    app: cwa-6
+    environment: dev
+spec:
+  project: default
+
+  source:
+    repoURL: PLACEHOLDER_REPO_URL
+    targetRevision: HEAD
+    path: .opsera-cwa-6/k8s/overlays/dev
+
+  destination:
+    # CRITICAL (RULE 59): Use 'name' for spoke cluster, NOT 'server'
+    name: opsera-use1-np
+    namespace: opsera-cwa-6-dev
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
