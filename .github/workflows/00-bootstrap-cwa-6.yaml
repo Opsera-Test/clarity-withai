@@ -10,9 +10,12 @@ on:
   workflow_dispatch:
     inputs:
       proceed:
-        description: 'Confirm bootstrap (creates infrastructure)'
-        type: boolean
-        default: false
+        description: 'Type YES to confirm bootstrap'
+        type: choice
+        options:
+          - 'NO'
+          - 'YES'
+        default: 'NO'
         required: true
 
 env:
@@ -36,7 +39,7 @@ jobs:
   verify-prerequisites:
     name: "🔍 Verify Prerequisites"
     runs-on: ubuntu-latest
-    if: inputs.proceed == true
+    if: inputs.proceed == 'YES'
     outputs:
       aws_account_id: ${{ steps.account.outputs.account_id }}
       ecr_repo: ${{ steps.account.outputs.ecr_repo }}
