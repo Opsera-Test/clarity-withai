@@ -1,7 +1,7 @@
 # ════════════════════════════════════════════════════════════════════════════
 # DEPLOYMENT - clarity1 Frontend
 # RULE 80: imagePullPolicy: Always required for Argo Rollouts
-# RULE 81: imagePullSecrets required for private ECR
+# RULE 112: No imagePullSecrets needed for EKS with IAM/IRSA permissions
 # ════════════════════════════════════════════════════════════════════════════
 
 apiVersion: apps/v1
@@ -22,9 +22,7 @@ spec:
         app: clarity1
         tenant: opsera
     spec:
-      # RULE 81: imagePullSecrets for private ECR
-      imagePullSecrets:
-        - name: ecr-registry-secret
+      # RULE 112: No imagePullSecrets needed for EKS with IAM/IRSA permissions
       containers:
         - name: clarity1
           image: clarity1:latest  # Replaced by Kustomize
