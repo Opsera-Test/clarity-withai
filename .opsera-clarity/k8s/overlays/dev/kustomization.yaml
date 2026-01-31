@@ -22,7 +22,7 @@ labels:
 images:
   - name: clarity
     newName: 792373136340.dkr.ecr.us-west-2.amazonaws.com/opsera/clarity
-    newTag: 1d701f9-20260131205222
+    newTag: 0cd9c12-20260131210608
 
 patches:
   # RULE 108: Only patch host, no TLS section needed for ACM wildcard
