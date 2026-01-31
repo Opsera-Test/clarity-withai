@@ -17,7 +17,7 @@ commonLabels:
 images:
   - name: clarity
     newName: 792373136340.dkr.ecr.us-west-2.amazonaws.com/opsera/clarity
-    newTag: latest
+    newTag: d5731a4-20260131201158
 
 patches:
   - target:
