@@ -2,6 +2,7 @@
 # DIAGNOSTICS WORKFLOW - clarity1
 # Code-to-Cloud Enterprise v0.901
 # RULE 50: MANDATORY diagnostics workflow
+# DEEP LOGGING ENABLED for investigation
 # ════════════════════════════════════════════════════════════════════════════
 
 name: "Diagnostics clarity1"
@@ -23,6 +24,7 @@ on:
           - argocd-debug
           - force-sync
           - cert-debug
+          - deep-debug
         default: full-pipeline
 
 env:
@@ -41,7 +43,7 @@ jobs:
   # FULL PIPELINE DIAGNOSTICS
   # ══════════════════════════════════════════════════════════════════════════
   full-pipeline:
-    name: "🔍 Full Pipeline Diagnostics"
+    name: "Full Pipeline Diagnostics"
     runs-on: ubuntu-latest
     if: inputs.diagnostic_type == 'full-pipeline'
     steps:
@@ -52,127 +54,284 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: "1️⃣ ECR Repository Check"
+      - name: "1 - ECR Repository Check"
         run: |
-          echo "### 📦 Stage 1: ECR Repository" >> $GITHUB_STEP_SUMMARY
+          echo "=========================================="
+          echo "STAGE 1: ECR REPOSITORY"
+          echo "=========================================="
+          
           REPO="${TENANT}/${APP_NAME}"
           
+          echo "--- Checking ECR repository: ${REPO} ---"
           if aws ecr describe-repositories --repository-names "$REPO" 2>/dev/null; then
-            echo "✅ ECR repository exists: \`${REPO}\`" >> $GITHUB_STEP_SUMMARY
+            echo "ECR repository exists: ${REPO}"
             
-            echo "**Recent Images:**" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo ""
+            echo "--- Recent Images ---"
             aws ecr describe-images --repository-name "$REPO" \
-              --query 'sort_by(imageDetails,&imagePushedAt)[-5:].{Tag:imageTags[0],Pushed:imagePushedAt}' \
-              --output table >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "No images found"
-            echo '```' >> $GITHUB_STEP_SUMMARY
+              --query 'sort_by(imageDetails,&imagePushedAt)[-10:].{Tag:imageTags[0],Pushed:imagePushedAt,Size:imageSizeInBytes}' \
+              --output table 2>/dev/null || echo "No images found"
+            
+            echo ""
+            echo "--- Latest Image Details ---"
+            aws ecr describe-images --repository-name "$REPO" \
+              --query 'sort_by(imageDetails,&imagePushedAt)[-1]' \
+              --output json 2>/dev/null || echo "No image details"
           else
-            echo "❌ ECR repository NOT found: \`${REPO}\`" >> $GITHUB_STEP_SUMMARY
-            echo "**Fix:** Run bootstrap workflow first" >> $GITHUB_STEP_SUMMARY
+            echo "ERROR: ECR repository NOT found: ${REPO}"
+            echo "FIX: Run bootstrap workflow first"
           fi
 
-      - name: "2️⃣ EKS Cluster Check"
+      - name: "2 - EKS Cluster Check"
         run: |
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 🎯 Stage 2: EKS Clusters" >> $GITHUB_STEP_SUMMARY
+          echo "=========================================="
+          echo "STAGE 2: EKS CLUSTERS"
+          echo "=========================================="
           
-          # Check Hub Cluster
+          echo "--- Hub Cluster: ${HUB_CLUSTER} ---"
           if aws eks describe-cluster --name $HUB_CLUSTER 2>/dev/null; then
-            echo "✅ Hub cluster exists: \`${HUB_CLUSTER}\`" >> $GITHUB_STEP_SUMMARY
+            echo "Hub cluster exists"
+            aws eks describe-cluster --name $HUB_CLUSTER \
+              --query 'cluster.{Status:status,Version:version,Endpoint:endpoint}' \
+              --output table
           else
-            echo "❌ Hub cluster NOT found: \`${HUB_CLUSTER}\`" >> $GITHUB_STEP_SUMMARY
+            echo "ERROR: Hub cluster NOT found"
           fi
           
-          # Check Spoke Cluster
+          echo ""
+          echo "--- Spoke Cluster: ${SPOKE_CLUSTER} ---"
           if aws eks describe-cluster --name $SPOKE_CLUSTER 2>/dev/null; then
-            echo "✅ Spoke cluster exists: \`${SPOKE_CLUSTER}\`" >> $GITHUB_STEP_SUMMARY
+            echo "Spoke cluster exists"
+            aws eks describe-cluster --name $SPOKE_CLUSTER \
+              --query 'cluster.{Status:status,Version:version,Endpoint:endpoint}' \
+              --output table
           else
-            echo "❌ Spoke cluster NOT found: \`${SPOKE_CLUSTER}\`" >> $GITHUB_STEP_SUMMARY
+            echo "ERROR: Spoke cluster NOT found"
           fi
 
       - name: Configure Spoke kubectl
         run: |
+          echo "Configuring kubectl for spoke cluster: ${SPOKE_CLUSTER}"
           aws eks update-kubeconfig --name $SPOKE_CLUSTER --region $AWS_REGION
+          kubectl config current-context
 
-      - name: "3️⃣ Namespace & Pods Check"
+      - name: "3 - Namespace & Pods Check (DEEP)"
         run: |
           NAMESPACE="opsera-${APP_NAME}-${{ inputs.environment }}"
           
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 🏷️ Stage 3: Namespace & Pods" >> $GITHUB_STEP_SUMMARY
+          echo "=========================================="
+          echo "STAGE 3: NAMESPACE & PODS - ${NAMESPACE}"
+          echo "=========================================="
+          
+          echo "--- All Namespaces (filtered) ---"
+          kubectl get namespaces | grep -E "opsera|clarity|argocd" || echo "No matching namespaces"
+          echo ""
           
           if kubectl get namespace $NAMESPACE 2>/dev/null; then
-            echo "✅ Namespace exists: \`${NAMESPACE}\`" >> $GITHUB_STEP_SUMMARY
+            echo "Namespace exists: ${NAMESPACE}"
+            echo ""
             
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**Pods:**" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            kubectl get pods -n $NAMESPACE -o wide 2>/dev/null || echo "No pods found"
-            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "--- Namespace Details ---"
+            kubectl describe namespace $NAMESPACE
+            echo ""
             
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**Services:**" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            kubectl get svc -n $NAMESPACE 2>/dev/null || echo "No services found"
-            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "--- All Resources in Namespace ---"
+            kubectl get all -n $NAMESPACE -o wide
+            echo ""
             
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**Ingress:**" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            kubectl get ingress -n $NAMESPACE 2>/dev/null || echo "No ingress found"
-            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "--- Pods (detailed) ---"
+            kubectl get pods -n $NAMESPACE -o wide
+            echo ""
+            
+            echo "--- Pod Descriptions ---"
+            for POD in $(kubectl get pods -n $NAMESPACE -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+              echo "========== POD: $POD =========="
+              kubectl describe pod $POD -n $NAMESPACE 2>/dev/null || echo "Could not describe pod"
+              echo ""
+            done
+            
+            echo "--- Pod Conditions ---"
+            kubectl get pods -n $NAMESPACE -o jsonpath='{range .items[*]}{.metadata.name}{": "}{.status.conditions}{"\n"}{end}' 2>/dev/null | head -50
+            echo ""
+            
+            echo "--- Services ---"
+            kubectl get svc -n $NAMESPACE -o wide
+            echo ""
+            
+            echo "--- Service Details ---"
+            kubectl describe svc -n $NAMESPACE 2>/dev/null || echo "No services"
+            echo ""
+            
+            echo "--- Endpoints ---"
+            kubectl get endpoints -n $NAMESPACE
+            echo ""
+            
+            echo "--- Endpoint Details ---"
+            kubectl describe endpoints -n $NAMESPACE 2>/dev/null || echo "No endpoints"
+            echo ""
+            
+            echo "--- Ingress ---"
+            kubectl get ingress -n $NAMESPACE -o wide
+            echo ""
+            
+            echo "--- Ingress Details ---"
+            kubectl describe ingress -n $NAMESPACE 2>/dev/null || echo "No ingress"
+            echo ""
+            
+            echo "--- Deployments ---"
+            kubectl get deployments -n $NAMESPACE -o wide
+            echo ""
+            
+            echo "--- Deployment Details ---"
+            kubectl describe deployments -n $NAMESPACE 2>/dev/null || echo "No deployments"
+            echo ""
+            
+            echo "--- ReplicaSets ---"
+            kubectl get replicasets -n $NAMESPACE -o wide
+            echo ""
+            
+            echo "--- Events (all, sorted) ---"
+            kubectl get events -n $NAMESPACE --sort-by='.lastTimestamp'
+            echo ""
+            
+            echo "--- ConfigMaps ---"
+            kubectl get configmaps -n $NAMESPACE
+            echo ""
+            
+            echo "--- Secrets (names only) ---"
+            kubectl get secrets -n $NAMESPACE
+            echo ""
           else
-            echo "❌ Namespace NOT found: \`${NAMESPACE}\`" >> $GITHUB_STEP_SUMMARY
+            echo "ERROR: Namespace NOT found: ${NAMESPACE}"
+            echo ""
+            echo "--- Checking if namespace was ever created ---"
+            kubectl get events --all-namespaces --field-selector reason=SuccessfulCreate 2>/dev/null | grep -i "$NAMESPACE" || echo "No namespace creation events found"
           fi
 
       - name: Configure Hub kubectl
         run: |
+          echo "Configuring kubectl for hub cluster: ${HUB_CLUSTER}"
           aws eks update-kubeconfig --name $HUB_CLUSTER --region $AWS_REGION
+          kubectl config current-context
 
-      - name: "4️⃣ ArgoCD Application Check"
+      - name: "4 - ArgoCD Application Check (DEEP)"
         run: |
           APP="${APP_NAME}-${{ inputs.environment }}"
           
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 🔄 Stage 4: ArgoCD Application" >> $GITHUB_STEP_SUMMARY
+          echo "=========================================="
+          echo "STAGE 4: ARGOCD APPLICATION - ${APP}"
+          echo "=========================================="
+          
+          echo "--- All ArgoCD Applications ---"
+          kubectl get applications -n argocd -o wide
+          echo ""
           
           if kubectl get application $APP -n argocd 2>/dev/null; then
-            echo "✅ ArgoCD Application exists: \`${APP}\`" >> $GITHUB_STEP_SUMMARY
+            echo "ArgoCD Application exists: ${APP}"
+            echo ""
             
+            echo "--- Application Full YAML ---"
+            kubectl get application $APP -n argocd -o yaml
+            echo ""
+            
+            echo "--- Sync Status ---"
             SYNC=$(kubectl get application $APP -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
             HEALTH=$(kubectl get application $APP -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
+            REVISION=$(kubectl get application $APP -n argocd -o jsonpath='{.status.sync.revision}' 2>/dev/null || echo "Unknown")
             
-            echo "- **Sync Status:** \`${SYNC}\`" >> $GITHUB_STEP_SUMMARY
-            echo "- **Health Status:** \`${HEALTH}\`" >> $GITHUB_STEP_SUMMARY
+            echo "Sync Status: $SYNC"
+            echo "Health Status: $HEALTH"
+            echo "Sync Revision: $REVISION"
+            echo ""
+            
+            echo "--- Operation State ---"
+            kubectl get application $APP -n argocd -o jsonpath='{.status.operationState}' | jq . 2>/dev/null || echo "No operation state"
+            echo ""
+            
+            echo "--- Conditions ---"
+            kubectl get application $APP -n argocd -o jsonpath='{.status.conditions}' | jq . 2>/dev/null || echo "No conditions"
+            echo ""
+            
+            echo "--- Resource Status ---"
+            kubectl get application $APP -n argocd -o jsonpath='{.status.resources}' | jq . 2>/dev/null || echo "No resource status"
+            echo ""
+            
+            echo "--- Sync Result ---"
+            kubectl get application $APP -n argocd -o jsonpath='{.status.operationState.syncResult}' | jq . 2>/dev/null || echo "No sync result"
+            echo ""
+            
+            echo "--- History ---"
+            kubectl get application $APP -n argocd -o jsonpath='{.status.history}' | jq . 2>/dev/null || echo "No history"
+            echo ""
+            
+            echo "--- ArgoCD Events ---"
+            kubectl get events -n argocd --field-selector involvedObject.name=$APP --sort-by='.lastTimestamp' 2>/dev/null || echo "No events"
+            echo ""
           else
-            echo "❌ ArgoCD Application NOT found: \`${APP}\`" >> $GITHUB_STEP_SUMMARY
+            echo "ERROR: ArgoCD Application NOT found: ${APP}"
+            echo ""
+            echo "--- Checking ArgoCD controller logs ---"
+            kubectl logs -n argocd -l app.kubernetes.io/name=argocd-application-controller --tail=50 2>/dev/null || echo "Could not get controller logs"
           fi
 
-      - name: "5️⃣ Health Endpoint Check"
+      - name: "5 - Health Endpoint Check (DEEP)"
         continue-on-error: true
         run: |
           URL="https://opsera-${APP_NAME}-${{ inputs.environment }}.agent.opsera.dev"
           
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 🏥 Stage 5: Health Check" >> $GITHUB_STEP_SUMMARY
+          echo "=========================================="
+          echo "STAGE 5: HEALTH CHECK - ${URL}"
+          echo "=========================================="
           
+          echo "--- DNS Resolution ---"
+          nslookup "opsera-${APP_NAME}-${{ inputs.environment }}.agent.opsera.dev" 2>/dev/null || echo "DNS lookup failed"
+          echo ""
+          
+          echo "--- Curl Verbose ---"
+          curl -v --max-time 30 "$URL" 2>&1 || echo "Curl failed"
+          echo ""
+          
+          echo "--- HTTP Code Check ---"
           HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$URL" 2>/dev/null || echo "000")
+          echo "HTTP Response Code: ${HTTP_CODE}"
           
           if [ "$HTTP_CODE" = "200" ]; then
-            echo "✅ Application healthy: HTTP ${HTTP_CODE}" >> $GITHUB_STEP_SUMMARY
+            echo "Application healthy"
           elif [ "$HTTP_CODE" = "000" ]; then
-            echo "❌ Application unreachable (DNS not configured or app not deployed)" >> $GITHUB_STEP_SUMMARY
+            echo "Application unreachable (DNS not configured or app not deployed)"
           else
-            echo "⚠️ Application returned: HTTP ${HTTP_CODE}" >> $GITHUB_STEP_SUMMARY
+            echo "Application returned unexpected code: ${HTTP_CODE}"
           fi
+
+      - name: "6 - Ingress Controller Check"
+        run: |
+          echo "=========================================="
+          echo "STAGE 6: INGRESS CONTROLLER"
+          echo "=========================================="
           
-          echo "- **URL:** \`${URL}\`" >> $GITHUB_STEP_SUMMARY
+          aws eks update-kubeconfig --name $SPOKE_CLUSTER --region $AWS_REGION
+          
+          echo "--- Ingress Controller Pods ---"
+          kubectl get pods -n ingress-nginx -o wide 2>/dev/null || echo "ingress-nginx namespace not found"
+          echo ""
+          
+          echo "--- Ingress Controller Service ---"
+          kubectl get svc -n ingress-nginx 2>/dev/null || echo "No ingress services"
+          echo ""
+          
+          echo "--- Ingress Classes ---"
+          kubectl get ingressclass 2>/dev/null || echo "No ingress classes"
+          echo ""
+          
+          echo "--- All Ingresses in Cluster ---"
+          kubectl get ingress --all-namespaces 2>/dev/null || echo "No ingresses found"
+          echo ""
 
   # ══════════════════════════════════════════════════════════════════════════
-  # POD LOGS
+  # POD LOGS (DEEP)
   # ══════════════════════════════════════════════════════════════════════════
   pod-logs:
-    name: "📋 Pod Logs"
+    name: "Pod Logs (Deep)"
     runs-on: ubuntu-latest
     if: inputs.diagnostic_type == 'pod-logs'
     steps:
@@ -187,35 +346,76 @@ jobs:
         run: |
           aws eks update-kubeconfig --name $SPOKE_CLUSTER --region $AWS_REGION
 
-      - name: Get Pod Logs
+      - name: Get Pod Status
         run: |
           NAMESPACE="opsera-${APP_NAME}-${{ inputs.environment }}"
           
-          echo "### 📋 Pod Logs - ${NAMESPACE}" >> $GITHUB_STEP_SUMMARY
+          echo "=========================================="
+          echo "POD STATUS - ${NAMESPACE}"
+          echo "=========================================="
           
-          for POD in $(kubectl get pods -n $NAMESPACE -l app=$APP_NAME -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "#### Pod: \`$POD\`" >> $GITHUB_STEP_SUMMARY
-            
-            # Current logs
-            echo "**Current Logs (last 50 lines):**" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            kubectl logs $POD -n $NAMESPACE --tail=50 2>/dev/null || echo "No logs available"
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            
-            # Previous container logs
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**Previous Container (if crashed):**" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            kubectl logs $POD -n $NAMESPACE --previous --tail=20 2>/dev/null || echo "No previous logs"
-            echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "--- All Pods ---"
+          kubectl get pods -n $NAMESPACE -o wide 2>/dev/null || echo "No pods found"
+          echo ""
+          
+          echo "--- Pod JSON Status ---"
+          kubectl get pods -n $NAMESPACE -o json 2>/dev/null | jq '.items[] | {name: .metadata.name, phase: .status.phase, conditions: .status.conditions, containerStatuses: .status.containerStatuses}' || echo "Could not get pod JSON"
+          echo ""
+
+      - name: Get Pod Descriptions
+        run: |
+          NAMESPACE="opsera-${APP_NAME}-${{ inputs.environment }}"
+          
+          echo "=========================================="
+          echo "POD DESCRIPTIONS"
+          echo "=========================================="
+          
+          for POD in $(kubectl get pods -n $NAMESPACE -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+            echo "========== DESCRIBE: $POD =========="
+            kubectl describe pod $POD -n $NAMESPACE 2>/dev/null || echo "Could not describe pod"
+            echo ""
           done
 
+      - name: Get Pod Logs (Full)
+        run: |
+          NAMESPACE="opsera-${APP_NAME}-${{ inputs.environment }}"
+          
+          echo "=========================================="
+          echo "POD LOGS - ${NAMESPACE}"
+          echo "=========================================="
+          
+          for POD in $(kubectl get pods -n $NAMESPACE -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+            echo "========== CURRENT LOGS: $POD (last 200 lines) =========="
+            kubectl logs $POD -n $NAMESPACE --tail=200 2>/dev/null || echo "No logs available"
+            echo ""
+            
+            echo "========== PREVIOUS LOGS: $POD (if crashed) =========="
+            kubectl logs $POD -n $NAMESPACE --previous --tail=100 2>/dev/null || echo "No previous logs"
+            echo ""
+            
+            echo "========== INIT CONTAINER LOGS: $POD =========="
+            for INIT in $(kubectl get pod $POD -n $NAMESPACE -o jsonpath='{.spec.initContainers[*].name}' 2>/dev/null); do
+              echo "--- Init Container: $INIT ---"
+              kubectl logs $POD -n $NAMESPACE -c $INIT 2>/dev/null || echo "No init logs"
+            done
+            echo ""
+          done
+
+      - name: Get Events
+        run: |
+          NAMESPACE="opsera-${APP_NAME}-${{ inputs.environment }}"
+          
+          echo "=========================================="
+          echo "EVENTS - ${NAMESPACE}"
+          echo "=========================================="
+          
+          kubectl get events -n $NAMESPACE --sort-by='.lastTimestamp' 2>/dev/null || echo "No events"
+
   # ══════════════════════════════════════════════════════════════════════════
-  # ARGOCD DEBUG
+  # ARGOCD DEBUG (DEEP)
   # ══════════════════════════════════════════════════════════════════════════
   argocd-debug:
-    name: "🔄 ArgoCD Debug"
+    name: "ArgoCD Debug (Deep)"
     runs-on: ubuntu-latest
     if: inputs.diagnostic_type == 'argocd-debug'
     steps:
@@ -228,31 +428,135 @@ jobs:
 
       - name: Configure Hub kubectl
         run: |
+          echo "Configuring kubectl for hub cluster: ${HUB_CLUSTER}"
           aws eks update-kubeconfig --name $HUB_CLUSTER --region $AWS_REGION
+          kubectl config current-context
 
-      - name: Debug ArgoCD Application
+      - name: ArgoCD System Status
+        run: |
+          echo "=========================================="
+          echo "ARGOCD SYSTEM STATUS"
+          echo "=========================================="
+          
+          echo "--- ArgoCD Namespace Resources ---"
+          kubectl get all -n argocd
+          echo ""
+          
+          echo "--- ArgoCD Pods ---"
+          kubectl get pods -n argocd -o wide
+          echo ""
+          
+          echo "--- ArgoCD Pod Health ---"
+          for POD in $(kubectl get pods -n argocd -o jsonpath='{.items[*].metadata.name}'); do
+            READY=$(kubectl get pod $POD -n argocd -o jsonpath='{.status.containerStatuses[0].ready}' 2>/dev/null || echo "unknown")
+            RESTARTS=$(kubectl get pod $POD -n argocd -o jsonpath='{.status.containerStatuses[0].restartCount}' 2>/dev/null || echo "unknown")
+            echo "  $POD: ready=$READY restarts=$RESTARTS"
+          done
+          echo ""
+          
+          echo "--- ArgoCD ConfigMap ---"
+          kubectl get configmap argocd-cm -n argocd -o yaml 2>/dev/null || echo "argocd-cm not found"
+          echo ""
+
+      - name: Debug ArgoCD Application (Deep)
         run: |
           APP="${APP_NAME}-${{ inputs.environment }}"
           
-          echo "### 🔄 ArgoCD Debug: ${APP}" >> $GITHUB_STEP_SUMMARY
+          echo "=========================================="
+          echo "ARGOCD APPLICATION: ${APP}"
+          echo "=========================================="
           
-          echo "**Application Status:**" >> $GITHUB_STEP_SUMMARY
-          echo '```yaml' >> $GITHUB_STEP_SUMMARY
+          echo "--- All Applications ---"
+          kubectl get applications -n argocd -o wide
+          echo ""
+          
+          echo "--- Application Full YAML ---"
           kubectl get application $APP -n argocd -o yaml 2>/dev/null || echo "Application not found"
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo ""
           
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Recent Events:**" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          kubectl get events -n argocd --field-selector involvedObject.name=$APP \
-            --sort-by='.lastTimestamp' 2>/dev/null | tail -20 || echo "No events"
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "--- Application Status Breakdown ---"
+          echo "Sync Status: $(kubectl get application $APP -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo 'Unknown')"
+          echo "Health Status: $(kubectl get application $APP -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo 'Unknown')"
+          echo "Sync Revision: $(kubectl get application $APP -n argocd -o jsonpath='{.status.sync.revision}' 2>/dev/null || echo 'Unknown')"
+          echo "Source Repo: $(kubectl get application $APP -n argocd -o jsonpath='{.spec.source.repoURL}' 2>/dev/null || echo 'Unknown')"
+          echo "Source Path: $(kubectl get application $APP -n argocd -o jsonpath='{.spec.source.path}' 2>/dev/null || echo 'Unknown')"
+          echo "Destination: $(kubectl get application $APP -n argocd -o jsonpath='{.spec.destination.name}' 2>/dev/null || echo 'Unknown')"
+          echo "Target Namespace: $(kubectl get application $APP -n argocd -o jsonpath='{.spec.destination.namespace}' 2>/dev/null || echo 'Unknown')"
+          echo ""
+          
+          echo "--- Operation State ---"
+          kubectl get application $APP -n argocd -o jsonpath='{.status.operationState}' 2>/dev/null | jq . || echo "No operation state"
+          echo ""
+          
+          echo "--- Conditions ---"
+          kubectl get application $APP -n argocd -o jsonpath='{.status.conditions}' 2>/dev/null | jq . || echo "No conditions"
+          echo ""
+          
+          echo "--- Resource Status (per resource) ---"
+          kubectl get application $APP -n argocd -o jsonpath='{.status.resources}' 2>/dev/null | jq '.[] | {kind: .kind, name: .name, status: .status, health: .health, message: .message}' || echo "No resource status"
+          echo ""
+          
+          echo "--- Sync Result ---"
+          kubectl get application $APP -n argocd -o jsonpath='{.status.operationState.syncResult}' 2>/dev/null | jq . || echo "No sync result"
+          echo ""
+          
+          echo "--- History (last 5 syncs) ---"
+          kubectl get application $APP -n argocd -o jsonpath='{.status.history}' 2>/dev/null | jq '.[-5:]' || echo "No history"
+          echo ""
+
+      - name: ArgoCD Controller Logs
+        run: |
+          echo "=========================================="
+          echo "ARGOCD CONTROLLER LOGS (last 100 lines)"
+          echo "=========================================="
+          
+          kubectl logs -n argocd -l app.kubernetes.io/name=argocd-application-controller --tail=100 2>/dev/null || echo "Could not get controller logs"
+          echo ""
+
+      - name: ArgoCD Repo Server Logs
+        run: |
+          echo "=========================================="
+          echo "ARGOCD REPO SERVER LOGS (last 50 lines)"
+          echo "=========================================="
+          
+          kubectl logs -n argocd -l app.kubernetes.io/name=argocd-repo-server --tail=50 2>/dev/null || echo "Could not get repo server logs"
+          echo ""
+
+      - name: ArgoCD Events
+        run: |
+          APP="${APP_NAME}-${{ inputs.environment }}"
+          
+          echo "=========================================="
+          echo "ARGOCD EVENTS"
+          echo "=========================================="
+          
+          echo "--- Events for Application: ${APP} ---"
+          kubectl get events -n argocd --field-selector involvedObject.name=$APP --sort-by='.lastTimestamp' 2>/dev/null || echo "No events"
+          echo ""
+          
+          echo "--- All ArgoCD Events (last 50) ---"
+          kubectl get events -n argocd --sort-by='.lastTimestamp' 2>/dev/null | tail -50 || echo "No events"
+          echo ""
+
+      - name: ArgoCD Secrets Check
+        run: |
+          echo "=========================================="
+          echo "ARGOCD SECRETS CHECK (names only)"
+          echo "=========================================="
+          
+          echo "--- Repository Secrets ---"
+          kubectl get secrets -n argocd -l argocd.argoproj.io/secret-type=repository 2>/dev/null || echo "No repo secrets"
+          echo ""
+          
+          echo "--- Cluster Secrets ---"
+          kubectl get secrets -n argocd -l argocd.argoproj.io/secret-type=cluster 2>/dev/null || echo "No cluster secrets"
+          echo ""
 
   # ══════════════════════════════════════════════════════════════════════════
-  # FORCE SYNC - RULE 110: Delete deployment first to reset immutable fields
+  # FORCE SYNC (DEEP) - RULE 110: Delete deployment first to reset immutable fields
   # ══════════════════════════════════════════════════════════════════════════
   force-sync:
-    name: "Force Sync with Deployment Reset"
+    name: "Force Sync with Deployment Reset (Deep)"
     runs-on: ubuntu-latest
     if: inputs.diagnostic_type == 'force-sync'
     steps:
@@ -265,61 +569,231 @@ jobs:
 
       - name: Configure Spoke kubectl
         run: |
+          echo "Configuring kubectl for spoke cluster: ${SPOKE_CLUSTER}"
           aws eks update-kubeconfig --name $SPOKE_CLUSTER --region $AWS_REGION
+          kubectl config current-context
+
+      - name: Pre-Delete Status
+        run: |
+          NAMESPACE="opsera-${APP_NAME}-${{ inputs.environment }}"
+          
+          echo "=========================================="
+          echo "PRE-DELETE STATUS - ${NAMESPACE}"
+          echo "=========================================="
+          
+          echo "--- Namespace ---"
+          kubectl get namespace $NAMESPACE 2>/dev/null || echo "Namespace not found"
+          echo ""
+          
+          echo "--- All Resources ---"
+          kubectl get all -n $NAMESPACE 2>/dev/null || echo "No resources"
+          echo ""
+          
+          echo "--- Deployment ---"
+          kubectl get deployment ${APP_NAME} -n $NAMESPACE -o wide 2>/dev/null || echo "Deployment not found"
+          echo ""
+          
+          echo "--- Deployment YAML ---"
+          kubectl get deployment ${APP_NAME} -n $NAMESPACE -o yaml 2>/dev/null || echo "No deployment YAML"
+          echo ""
+          
+          echo "--- Pods ---"
+          kubectl get pods -n $NAMESPACE -o wide 2>/dev/null || echo "No pods"
+          echo ""
 
       - name: Delete Deployment (RULE 110)
         run: |
           NAMESPACE="opsera-${APP_NAME}-${{ inputs.environment }}"
           
-          echo "### RULE 110: Delete Deployment First" >> $GITHUB_STEP_SUMMARY
+          echo "=========================================="
+          echo "RULE 110: DELETE DEPLOYMENT"
+          echo "=========================================="
           
-          # Delete deployment to reset immutable selector fields
-          kubectl delete deployment ${APP_NAME} -n $NAMESPACE 2>/dev/null || echo "Deployment not found (OK)"
+          echo "Deleting deployment to reset immutable selector fields..."
           
-          echo "Deployment deleted - immutable fields will be reset on sync" >> $GITHUB_STEP_SUMMARY
+          # Delete deployment
+          kubectl delete deployment ${APP_NAME} -n $NAMESPACE 2>/dev/null && echo "Deployment deleted successfully" || echo "Deployment not found (OK)"
+          
+          echo ""
+          echo "Waiting 10 seconds for deletion to propagate..."
+          sleep 10
+          
+          echo ""
+          echo "--- Verifying deletion ---"
+          kubectl get deployment ${APP_NAME} -n $NAMESPACE 2>/dev/null && echo "WARNING: Deployment still exists" || echo "Deployment confirmed deleted"
+          echo ""
+          
+          echo "--- Remaining pods (should be terminating) ---"
+          kubectl get pods -n $NAMESPACE 2>/dev/null || echo "No pods"
+          echo ""
 
       - name: Configure Hub kubectl
         run: |
+          echo "Configuring kubectl for hub cluster: ${HUB_CLUSTER}"
           aws eks update-kubeconfig --name $HUB_CLUSTER --region $AWS_REGION
+          kubectl config current-context
+
+      - name: Pre-Sync ArgoCD Status
+        run: |
+          APP="${APP_NAME}-${{ inputs.environment }}"
+          
+          echo "=========================================="
+          echo "PRE-SYNC ARGOCD STATUS: ${APP}"
+          echo "=========================================="
+          
+          echo "--- Application Status ---"
+          kubectl get application $APP -n argocd -o wide 2>/dev/null || echo "Application not found"
+          echo ""
+          
+          echo "Sync Status: $(kubectl get application $APP -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo 'Unknown')"
+          echo "Health Status: $(kubectl get application $APP -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo 'Unknown')"
+          echo ""
 
       - name: Force Sync ArgoCD
         run: |
           APP="${APP_NAME}-${{ inputs.environment }}"
           
-          echo "### Force Sync: ${APP}" >> $GITHUB_STEP_SUMMARY
+          echo "=========================================="
+          echo "FORCE SYNC: ${APP}"
+          echo "=========================================="
           
-          # Hard refresh (clear cache)
+          echo "--- Step 1: Hard Refresh (clear cache) ---"
           kubectl annotate application $APP -n argocd \
-            argocd.argoproj.io/refresh=hard --overwrite 2>/dev/null || true
+            argocd.argoproj.io/refresh=hard --overwrite 2>/dev/null || echo "Could not annotate"
+          echo "Hard refresh annotation applied"
           
-          echo "Force sync triggered" >> $GITHUB_STEP_SUMMARY
+          sleep 5
           
-          sleep 60
+          echo ""
+          echo "--- Step 2: Force Sync Operation ---"
+          kubectl patch application $APP -n argocd --type merge -p '{"operation":{"initiatedBy":{"username":"diagnostics"},"sync":{"prune":true}}}' 2>/dev/null || echo "Sync patch applied or already syncing"
+          echo "Sync operation triggered"
           
-          # Check status
-          SYNC=$(kubectl get application $APP -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
-          HEALTH=$(kubectl get application $APP -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
+          echo ""
+          echo "--- Step 3: Monitoring sync progress ---"
+          for i in 1 2 3 4 5 6; do
+            echo ""
+            echo "=== Check $i (after $((i * 10))s) ==="
+            sleep 10
+            
+            SYNC=$(kubectl get application $APP -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
+            HEALTH=$(kubectl get application $APP -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
+            OP_PHASE=$(kubectl get application $APP -n argocd -o jsonpath='{.status.operationState.phase}' 2>/dev/null || echo "None")
+            
+            echo "Sync: $SYNC | Health: $HEALTH | Operation: $OP_PHASE"
+            
+            if [ "$SYNC" = "Synced" ] && [ "$HEALTH" = "Healthy" ]; then
+              echo "Sync completed successfully!"
+              break
+            fi
+          done
+          echo ""
+
+      - name: Post-Sync ArgoCD Status
+        run: |
+          APP="${APP_NAME}-${{ inputs.environment }}"
           
-          echo "**After Sync:**" >> $GITHUB_STEP_SUMMARY
-          echo "- Sync: ${SYNC}" >> $GITHUB_STEP_SUMMARY
-          echo "- Health: ${HEALTH}" >> $GITHUB_STEP_SUMMARY
+          echo "=========================================="
+          echo "POST-SYNC ARGOCD STATUS"
+          echo "=========================================="
+          
+          echo "--- Application Status ---"
+          kubectl get application $APP -n argocd -o wide 2>/dev/null
+          echo ""
+          
+          echo "--- Operation State ---"
+          kubectl get application $APP -n argocd -o jsonpath='{.status.operationState}' 2>/dev/null | jq . || echo "No operation state"
+          echo ""
+          
+          echo "--- Sync Result ---"
+          kubectl get application $APP -n argocd -o jsonpath='{.status.operationState.syncResult}' 2>/dev/null | jq . || echo "No sync result"
+          echo ""
+          
+          echo "--- Resource Status ---"
+          kubectl get application $APP -n argocd -o jsonpath='{.status.resources}' 2>/dev/null | jq '.[] | {kind: .kind, name: .name, status: .status, health: .health}' || echo "No resource status"
+          echo ""
+          
+          echo "--- Conditions ---"
+          kubectl get application $APP -n argocd -o jsonpath='{.status.conditions}' 2>/dev/null | jq . || echo "No conditions"
+          echo ""
 
       - name: Verify Pods Running
         run: |
-          aws eks update-kubeconfig --name $SPOKE_CLUSTER --region $AWS_REGION
           NAMESPACE="opsera-${APP_NAME}-${{ inputs.environment }}"
           
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Pod Status After Sync" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          kubectl get pods -n $NAMESPACE -o wide 2>/dev/null || echo "No pods found"
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "=========================================="
+          echo "VERIFYING PODS - ${NAMESPACE}"
+          echo "=========================================="
+          
+          aws eks update-kubeconfig --name $SPOKE_CLUSTER --region $AWS_REGION
+          
+          echo "--- Waiting for pods to start ---"
+          for i in 1 2 3 4 5 6; do
+            echo ""
+            echo "=== Check $i (after $((i * 10))s) ==="
+            sleep 10
+            
+            echo "Pods:"
+            kubectl get pods -n $NAMESPACE -o wide 2>/dev/null || echo "No pods"
+            
+            RUNNING=$(kubectl get pods -n $NAMESPACE -l app=${APP_NAME} -o jsonpath='{.items[*].status.phase}' 2>/dev/null | tr ' ' '\n' | grep -c Running || echo 0)
+            TOTAL=$(kubectl get pods -n $NAMESPACE -l app=${APP_NAME} --no-headers 2>/dev/null | wc -l || echo 0)
+            
+            echo "Running: $RUNNING / Total: $TOTAL"
+            
+            if [ "$TOTAL" -gt 0 ] && [ "$RUNNING" -eq "$TOTAL" ]; then
+              echo "All pods running!"
+              break
+            fi
+          done
+          echo ""
+
+      - name: Final Status
+        run: |
+          NAMESPACE="opsera-${APP_NAME}-${{ inputs.environment }}"
+          APP="${APP_NAME}-${{ inputs.environment }}"
+          
+          echo "=========================================="
+          echo "FINAL STATUS"
+          echo "=========================================="
+          
+          echo "--- Hub Cluster: ArgoCD ---"
+          aws eks update-kubeconfig --name $HUB_CLUSTER --region $AWS_REGION
+          kubectl get application $APP -n argocd -o wide 2>/dev/null
+          echo ""
+          
+          echo "--- Spoke Cluster: Resources ---"
+          aws eks update-kubeconfig --name $SPOKE_CLUSTER --region $AWS_REGION
+          
+          echo "All Resources:"
+          kubectl get all -n $NAMESPACE 2>/dev/null
+          echo ""
+          
+          echo "Pods:"
+          kubectl get pods -n $NAMESPACE -o wide 2>/dev/null
+          echo ""
+          
+          echo "Services:"
+          kubectl get svc -n $NAMESPACE 2>/dev/null
+          echo ""
+          
+          echo "Ingress:"
+          kubectl get ingress -n $NAMESPACE 2>/dev/null
+          echo ""
+          
+          echo "Endpoints:"
+          kubectl get endpoints -n $NAMESPACE 2>/dev/null
+          echo ""
+          
+          echo "Events:"
+          kubectl get events -n $NAMESPACE --sort-by='.lastTimestamp' 2>/dev/null | tail -20
+          echo ""
 
   # ══════════════════════════════════════════════════════════════════════════
-  # CERT-MANAGER DEBUG
+  # CERT-MANAGER DEBUG (DEEP)
   # ══════════════════════════════════════════════════════════════════════════
   cert-debug:
-    name: "🔐 Certificate Debug"
+    name: "Certificate Debug (Deep)"
     runs-on: ubuntu-latest
     if: inputs.diagnostic_type == 'cert-debug'
     steps:
@@ -334,31 +808,289 @@ jobs:
         run: |
           aws eks update-kubeconfig --name $SPOKE_CLUSTER --region $AWS_REGION
 
-      - name: Debug Certificates
+      - name: Debug Certificates (Deep)
         run: |
           NAMESPACE="opsera-${APP_NAME}-${{ inputs.environment }}"
           
-          echo "### 🔐 Certificate Debug" >> $GITHUB_STEP_SUMMARY
+          echo "=========================================="
+          echo "CERTIFICATE DEBUG"
+          echo "=========================================="
           
-          echo "**cert-manager pods:**" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          kubectl get pods -n cert-manager 2>/dev/null || echo "cert-manager not found"
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "--- cert-manager namespace ---"
+          kubectl get all -n cert-manager 2>/dev/null || echo "cert-manager namespace not found"
+          echo ""
           
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**ClusterIssuer:**" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "--- cert-manager pods ---"
+          kubectl get pods -n cert-manager -o wide 2>/dev/null || echo "No cert-manager pods"
+          echo ""
+          
+          echo "--- ClusterIssuers ---"
           kubectl get clusterissuer 2>/dev/null || echo "No ClusterIssuers"
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo ""
           
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Certificates in namespace:**" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "--- ClusterIssuer Details ---"
+          kubectl describe clusterissuer 2>/dev/null || echo "Could not describe ClusterIssuers"
+          echo ""
+          
+          echo "--- Certificates in namespace: ${NAMESPACE} ---"
           kubectl get certificates -n $NAMESPACE 2>/dev/null || echo "No certificates"
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo ""
           
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**TLS Secret:**" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          kubectl get secret opsera-wildcard-tls -n ingress-nginx 2>/dev/null || echo "Wildcard TLS secret not found"
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "--- Certificate Details ---"
+          kubectl describe certificates -n $NAMESPACE 2>/dev/null || echo "Could not describe certificates"
+          echo ""
+          
+          echo "--- CertificateRequests ---"
+          kubectl get certificaterequests -n $NAMESPACE 2>/dev/null || echo "No certificate requests"
+          echo ""
+          
+          echo "--- TLS Secrets in namespace ---"
+          kubectl get secrets -n $NAMESPACE --field-selector type=kubernetes.io/tls 2>/dev/null || echo "No TLS secrets"
+          echo ""
+          
+          echo "--- Wildcard TLS Secret (ingress-nginx) ---"
+          kubectl get secret opsera-wildcard-tls -n ingress-nginx -o yaml 2>/dev/null || echo "Wildcard TLS secret not found in ingress-nginx"
+          echo ""
+          
+          echo "--- All TLS Secrets in ingress-nginx ---"
+          kubectl get secrets -n ingress-nginx --field-selector type=kubernetes.io/tls 2>/dev/null || echo "No TLS secrets in ingress-nginx"
+          echo ""
+          
+          echo "--- cert-manager logs ---"
+          kubectl logs -n cert-manager -l app=cert-manager --tail=50 2>/dev/null || echo "Could not get cert-manager logs"
+          echo ""
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # DEEP DEBUG - Comprehensive investigation
+  # ══════════════════════════════════════════════════════════════════════════
+  deep-debug:
+    name: "Deep Debug (All Systems)"
+    runs-on: ubuntu-latest
+    if: inputs.diagnostic_type == 'deep-debug'
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: "Section 1: AWS Resources"
+        run: |
+          echo "=========================================="
+          echo "SECTION 1: AWS RESOURCES"
+          echo "=========================================="
+          
+          REPO="${TENANT}/${APP_NAME}"
+          
+          echo "--- AWS Identity ---"
+          aws sts get-caller-identity
+          echo ""
+          
+          echo "--- ECR Repository ---"
+          aws ecr describe-repositories --repository-names "$REPO" 2>/dev/null || echo "ECR repo not found"
+          echo ""
+          
+          echo "--- ECR Images (last 10) ---"
+          aws ecr describe-images --repository-name "$REPO" \
+            --query 'sort_by(imageDetails,&imagePushedAt)[-10:]' \
+            --output json 2>/dev/null || echo "No images"
+          echo ""
+          
+          echo "--- EKS Clusters ---"
+          aws eks list-clusters --output table
+          echo ""
+          
+          echo "--- Hub Cluster Details ---"
+          aws eks describe-cluster --name $HUB_CLUSTER 2>/dev/null || echo "Hub cluster not found"
+          echo ""
+          
+          echo "--- Spoke Cluster Details ---"
+          aws eks describe-cluster --name $SPOKE_CLUSTER 2>/dev/null || echo "Spoke cluster not found"
+          echo ""
+
+      - name: "Section 2: Hub Cluster (ArgoCD)"
+        run: |
+          echo "=========================================="
+          echo "SECTION 2: HUB CLUSTER (ARGOCD)"
+          echo "=========================================="
+          
+          APP="${APP_NAME}-${{ inputs.environment }}"
+          
+          aws eks update-kubeconfig --name $HUB_CLUSTER --region $AWS_REGION
+          
+          echo "--- Cluster Info ---"
+          kubectl cluster-info
+          echo ""
+          
+          echo "--- ArgoCD Namespace ---"
+          kubectl get all -n argocd
+          echo ""
+          
+          echo "--- ArgoCD Applications ---"
+          kubectl get applications -n argocd -o wide
+          echo ""
+          
+          echo "--- Application: ${APP} (Full YAML) ---"
+          kubectl get application $APP -n argocd -o yaml 2>/dev/null || echo "Application not found"
+          echo ""
+          
+          echo "--- Application Status Detailed ---"
+          echo "Sync: $(kubectl get application $APP -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null)"
+          echo "Health: $(kubectl get application $APP -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null)"
+          echo "Revision: $(kubectl get application $APP -n argocd -o jsonpath='{.status.sync.revision}' 2>/dev/null)"
+          echo ""
+          
+          echo "--- Operation State ---"
+          kubectl get application $APP -n argocd -o jsonpath='{.status.operationState}' 2>/dev/null | jq . || echo "No operation state"
+          echo ""
+          
+          echo "--- Resource Status ---"
+          kubectl get application $APP -n argocd -o jsonpath='{.status.resources}' 2>/dev/null | jq . || echo "No resource status"
+          echo ""
+          
+          echo "--- Conditions ---"
+          kubectl get application $APP -n argocd -o jsonpath='{.status.conditions}' 2>/dev/null | jq . || echo "No conditions"
+          echo ""
+          
+          echo "--- ArgoCD Controller Logs ---"
+          kubectl logs -n argocd -l app.kubernetes.io/name=argocd-application-controller --tail=100 2>/dev/null || echo "No controller logs"
+          echo ""
+          
+          echo "--- ArgoCD Repo Server Logs ---"
+          kubectl logs -n argocd -l app.kubernetes.io/name=argocd-repo-server --tail=50 2>/dev/null || echo "No repo server logs"
+          echo ""
+          
+          echo "--- ArgoCD Events ---"
+          kubectl get events -n argocd --sort-by='.lastTimestamp' | tail -30
+          echo ""
+          
+          echo "--- Cluster Secrets (names only) ---"
+          kubectl get secrets -n argocd -l argocd.argoproj.io/secret-type=cluster
+          echo ""
+          
+          echo "--- Repository Secrets (names only) ---"
+          kubectl get secrets -n argocd -l argocd.argoproj.io/secret-type=repository
+          echo ""
+
+      - name: "Section 3: Spoke Cluster (Application)"
+        run: |
+          NAMESPACE="opsera-${APP_NAME}-${{ inputs.environment }}"
+          
+          echo "=========================================="
+          echo "SECTION 3: SPOKE CLUSTER (${NAMESPACE})"
+          echo "=========================================="
+          
+          aws eks update-kubeconfig --name $SPOKE_CLUSTER --region $AWS_REGION
+          
+          echo "--- Cluster Info ---"
+          kubectl cluster-info
+          echo ""
+          
+          echo "--- All Namespaces (filtered) ---"
+          kubectl get namespaces | grep -E "opsera|clarity|ingress|cert"
+          echo ""
+          
+          echo "--- Namespace: ${NAMESPACE} ---"
+          kubectl get namespace $NAMESPACE -o yaml 2>/dev/null || echo "Namespace not found"
+          echo ""
+          
+          echo "--- All Resources in Namespace ---"
+          kubectl get all -n $NAMESPACE -o wide 2>/dev/null || echo "No resources"
+          echo ""
+          
+          echo "--- Deployment (YAML) ---"
+          kubectl get deployment ${APP_NAME} -n $NAMESPACE -o yaml 2>/dev/null || echo "Deployment not found"
+          echo ""
+          
+          echo "--- Service (YAML) ---"
+          kubectl get service ${APP_NAME} -n $NAMESPACE -o yaml 2>/dev/null || echo "Service not found"
+          echo ""
+          
+          echo "--- Ingress (YAML) ---"
+          kubectl get ingress -n $NAMESPACE -o yaml 2>/dev/null || echo "Ingress not found"
+          echo ""
+          
+          echo "--- Pods ---"
+          kubectl get pods -n $NAMESPACE -o wide
+          echo ""
+          
+          echo "--- Pod Descriptions ---"
+          kubectl describe pods -n $NAMESPACE 2>/dev/null || echo "No pods"
+          echo ""
+          
+          echo "--- Pod Logs (last 100 lines each) ---"
+          for POD in $(kubectl get pods -n $NAMESPACE -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+            echo "========== LOGS: $POD =========="
+            kubectl logs $POD -n $NAMESPACE --tail=100 2>/dev/null || echo "No logs"
+            echo ""
+          done
+          
+          echo "--- Endpoints ---"
+          kubectl get endpoints -n $NAMESPACE -o yaml 2>/dev/null || echo "No endpoints"
+          echo ""
+          
+          echo "--- Events ---"
+          kubectl get events -n $NAMESPACE --sort-by='.lastTimestamp'
+          echo ""
+
+      - name: "Section 4: Ingress Controller"
+        run: |
+          echo "=========================================="
+          echo "SECTION 4: INGRESS CONTROLLER"
+          echo "=========================================="
+          
+          aws eks update-kubeconfig --name $SPOKE_CLUSTER --region $AWS_REGION
+          
+          echo "--- ingress-nginx namespace ---"
+          kubectl get all -n ingress-nginx 2>/dev/null || echo "ingress-nginx not found"
+          echo ""
+          
+          echo "--- Ingress Controller Pods ---"
+          kubectl get pods -n ingress-nginx -o wide 2>/dev/null
+          echo ""
+          
+          echo "--- Ingress Controller Service ---"
+          kubectl get svc -n ingress-nginx -o wide 2>/dev/null
+          echo ""
+          
+          echo "--- Ingress Classes ---"
+          kubectl get ingressclass 2>/dev/null
+          echo ""
+          
+          echo "--- All Ingresses in Cluster ---"
+          kubectl get ingress --all-namespaces 2>/dev/null
+          echo ""
+          
+          echo "--- Ingress Controller Logs (last 50) ---"
+          kubectl logs -n ingress-nginx -l app.kubernetes.io/name=ingress-nginx --tail=50 2>/dev/null || echo "No ingress logs"
+          echo ""
+
+      - name: "Section 5: Network Connectivity"
+        continue-on-error: true
+        run: |
+          URL="https://opsera-${APP_NAME}-${{ inputs.environment }}.agent.opsera.dev"
+          
+          echo "=========================================="
+          echo "SECTION 5: NETWORK CONNECTIVITY"
+          echo "=========================================="
+          
+          echo "--- Target URL: ${URL} ---"
+          echo ""
+          
+          echo "--- DNS Resolution ---"
+          nslookup "opsera-${APP_NAME}-${{ inputs.environment }}.agent.opsera.dev" 2>/dev/null || echo "DNS lookup failed"
+          echo ""
+          
+          echo "--- Curl Verbose ---"
+          curl -v --max-time 30 "$URL" 2>&1 || echo "Curl failed"
+          echo ""
+          
+          echo "--- HTTP Response Code ---"
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$URL" 2>/dev/null || echo "000")
+          echo "HTTP Code: ${HTTP_CODE}"
+          echo ""
+          
+          echo "--- SSL Certificate Info ---"
+          echo | openssl s_client -servername "opsera-${APP_NAME}-${{ inputs.environment }}.agent.opsera.dev" -connect "opsera-${APP_NAME}-${{ inputs.environment }}.agent.opsera.dev:443" 2>/dev/null | openssl x509 -noout -text 2>/dev/null || echo "Could not get SSL cert info"
+          echo ""
