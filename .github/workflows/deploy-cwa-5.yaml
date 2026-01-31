@@ -1,0 +1,237 @@
+# ════════════════════════════════════════════════════════════════════════════
+# DEPLOY CWA-5 - Complete deployment (Build + Push + Deploy)
+# Follows cwa-4 path with direct NLB
+# ════════════════════════════════════════════════════════════════════════════
+
+name: "🚀 cwa-5: Deploy"
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/deploy-cwa-5.yaml'
+  workflow_dispatch:
+
+env:
+  APP_NAME: cwa-5
+  TENANT: opsera
+  AWS_REGION: us-west-2
+  HUB_CLUSTER: argocd-usw2
+  SPOKE_CLUSTER: opsera-usw2-np
+  ECR_REPO: opsera/cwa-5
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  build-push:
+    name: "🔨 Build & Push"
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.tag.outputs.image_tag }}
+      ecr_uri: ${{ steps.aws.outputs.ecr_uri }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Generate Image Tag
+        id: tag
+        run: |
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          TIMESTAMP=$(date +%Y%m%d%H%M%S)
+          IMAGE_TAG="${SHORT_SHA}-${TIMESTAMP}"
+          echo "image_tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
+          echo "### Image Tag: \`${IMAGE_TAG}\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get AWS Account ID
+        id: aws
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          ECR_URI="${ACCOUNT_ID}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com"
+          echo "ecr_uri=${ECR_URI}" >> $GITHUB_OUTPUT
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and Push Docker Image
+        env:
+          ECR_URI: ${{ steps.aws.outputs.ecr_uri }}
+          IMAGE_TAG: ${{ steps.tag.outputs.image_tag }}
+        run: |
+          FULL_IMAGE="${ECR_URI}/${{ env.ECR_REPO }}:${IMAGE_TAG}"
+          LATEST_IMAGE="${ECR_URI}/${{ env.ECR_REPO }}:latest"
+          
+          echo "Building: ${FULL_IMAGE}"
+          
+          docker build \
+            -f .opsera-${{ env.APP_NAME }}/Dockerfile \
+            -t "${FULL_IMAGE}" \
+            -t "${LATEST_IMAGE}" \
+            .
+          
+          docker push "${FULL_IMAGE}"
+          docker push "${LATEST_IMAGE}"
+          
+          echo "### Docker Image" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Pushed: \`${FULL_IMAGE}\`" >> $GITHUB_STEP_SUMMARY
+
+  update-deploy:
+    name: "📦 Update & Deploy"
+    needs: [build-push]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Pull Latest
+        run: git pull --rebase origin main
+
+      - name: Update Kustomization
+        env:
+          IMAGE_TAG: ${{ needs.build-push.outputs.image_tag }}
+        run: |
+          KUSTOMIZATION=".opsera-${{ env.APP_NAME }}/k8s/overlays/dev/kustomization.yaml"
+          
+          # Update image tag
+          sed -i "s/newTag: .*/newTag: ${IMAGE_TAG}/" "${KUSTOMIZATION}"
+          
+          echo "### Kustomization Updated" >> $GITHUB_STEP_SUMMARY
+          echo "- Image Tag: \`${IMAGE_TAG}\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Commit and Push
+        env:
+          IMAGE_TAG: ${{ needs.build-push.outputs.image_tag }}
+        run: |
+          git add .opsera-${{ env.APP_NAME }}/
+          
+          if ! git diff --cached --quiet; then
+            git commit -m "deploy(dev): Update image to ${IMAGE_TAG} [skip ci]"
+            git pull --rebase origin main
+            git push origin main
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Configure kubectl for Hub
+        run: |
+          aws eks update-kubeconfig --name ${{ env.HUB_CLUSTER }} --region ${{ env.AWS_REGION }}
+
+      - name: Force ArgoCD Sync
+        run: |
+          kubectl annotate application ${{ env.APP_NAME }}-dev -n argocd \
+            argocd.argoproj.io/refresh=hard --overwrite || true
+          
+          echo "### ArgoCD Sync Triggered" >> $GITHUB_STEP_SUMMARY
+
+      - name: Wait for Sync
+        run: |
+          echo "Waiting for ArgoCD sync..."
+          TIMEOUT=120
+          ELAPSED=0
+          
+          while [ $ELAPSED -lt $TIMEOUT ]; do
+            SYNC=$(kubectl get application ${{ env.APP_NAME }}-dev -n argocd \
+              -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
+            HEALTH=$(kubectl get application ${{ env.APP_NAME }}-dev -n argocd \
+              -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
+            
+            echo "Sync: ${SYNC}, Health: ${HEALTH}"
+            
+            if [ "$SYNC" = "Synced" ]; then
+              echo "✅ Synced!" >> $GITHUB_STEP_SUMMARY
+              break
+            fi
+            
+            sleep 10
+            ELAPSED=$((ELAPSED + 10))
+          done
+
+  get-elb:
+    name: "🌐 Get ELB Endpoint"
+    needs: [update-deploy]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Configure kubectl for Spoke
+        run: |
+          aws eks update-kubeconfig --name ${{ env.SPOKE_CLUSTER }} --region ${{ env.AWS_REGION }}
+
+      - name: Wait for LoadBalancer
+        id: lb
+        run: |
+          NAMESPACE="${{ env.TENANT }}-${{ env.APP_NAME }}-dev"
+          SERVICE="${{ env.APP_NAME }}"
+          MAX_ATTEMPTS=30
+          
+          echo "### LoadBalancer Status" >> $GITHUB_STEP_SUMMARY
+          echo "Waiting for NLB provisioning..." >> $GITHUB_STEP_SUMMARY
+          
+          for i in $(seq 1 $MAX_ATTEMPTS); do
+            LB=$(kubectl get svc ${SERVICE} -n ${NAMESPACE} \
+              -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
+            
+            if [ -n "$LB" ] && [ "$LB" != "null" ]; then
+              echo "lb_hostname=${LB}" >> $GITHUB_OUTPUT
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "---" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "# 🎉 ELB Endpoint Ready!" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "## Application URL" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo '```' >> $GITHUB_STEP_SUMMARY
+              echo "http://${LB}" >> $GITHUB_STEP_SUMMARY
+              echo '```' >> $GITHUB_STEP_SUMMARY
+              exit 0
+            fi
+            
+            echo "Attempt ${i}/${MAX_ATTEMPTS} - waiting..."
+            sleep 10
+          done
+          
+          echo "❌ LoadBalancer not ready after ${MAX_ATTEMPTS} attempts" >> $GITHUB_STEP_SUMMARY
+          
+          # Show service status
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Service Status:**" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          kubectl get svc ${SERVICE} -n ${NAMESPACE} -o yaml >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Show Pod Status
+        run: |
+          NAMESPACE="${{ env.TENANT }}-${{ env.APP_NAME }}-dev"
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Pod Status" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          kubectl get pods -n ${NAMESPACE} -o wide >> $GITHUB_STEP_SUMMARY 2>&1 || echo "No pods found"
+          echo '```' >> $GITHUB_STEP_SUMMARY
