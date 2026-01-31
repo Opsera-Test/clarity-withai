@@ -1,0 +1,34 @@
+# ════════════════════════════════════════════════════════════════════════════
+# KUSTOMIZATION - DEV Environment Overlay
+# RULE 99: Environment-specific overlay with namespace
+# ════════════════════════════════════════════════════════════════════════════
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: opsera-clarity1-dev
+
+resources:
+  - ../../base
+  - namespace.yaml
+
+commonLabels:
+  environment: dev
+
+images:
+  - name: clarity1
+    newName: PLACEHOLDER_ECR_URI/opsera/clarity1
+    newTag: latest
+
+patches:
+  # Patch Ingress with environment-specific hostname
+  - target:
+      kind: Ingress
+      name: clarity1
+    patch: |-
+      - op: replace
+        path: /spec/rules/0/host
+        value: opsera-clarity1-dev.agent.opsera.dev
+      - op: replace
+        path: /spec/tls/0/hosts/0
+        value: opsera-clarity1-dev.agent.opsera.dev

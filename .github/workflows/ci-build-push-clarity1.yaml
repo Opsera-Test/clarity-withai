@@ -1,0 +1,346 @@
+# ════════════════════════════════════════════════════════════════════════════
+# CI/CD WORKFLOW - clarity1
+# Code-to-Cloud Enterprise v0.901
+# RULE 66: Force ArgoCD sync after manifest updates
+# ════════════════════════════════════════════════════════════════════════════
+
+name: "🔄 clarity1: CI Build & Push"
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'public/**'
+      - 'index.html'
+      - 'package.json'
+      - 'vite.config.ts'
+      - 'tailwind.config.ts'
+      - 'tsconfig*.json'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        type: choice
+        options: [dev]
+        default: 'dev'
+      skip_build:
+        description: 'Skip build (use existing image)'
+        type: boolean
+        default: false
+      image_tag:
+        description: 'Use specific image tag (requires skip_build)'
+        type: string
+
+concurrency:
+  group: ci-clarity1-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  APP_NAME: clarity1
+  TENANT: opsera
+  AWS_REGION: us-west-2
+  SPOKE_CLUSTER: opsera-usw2-np
+  HUB_CLUSTER: argocd-usw2
+  ENVIRONMENT: dev
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  # ══════════════════════════════════════════════════════════════════════════
+  # VERIFY PREREQUISITES
+  # ══════════════════════════════════════════════════════════════════════════
+  verify-bootstrap:
+    name: "🔍 Verify Bootstrap"
+    runs-on: ubuntu-latest
+    outputs:
+      ecr_uri: ${{ steps.ecr.outputs.uri }}
+      image_tag: ${{ steps.tag.outputs.value }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get AWS Account ID
+        id: aws
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          echo "account_id=${ACCOUNT_ID}" >> $GITHUB_OUTPUT
+
+      - name: Verify ECR Repository (RULE 10)
+        id: ecr
+        run: |
+          REPO_NAME="${TENANT}/${APP_NAME}"
+          ACCOUNT_ID="${{ steps.aws.outputs.account_id }}"
+          ECR_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          
+          if ! aws ecr describe-repositories --repository-names "$REPO_NAME" 2>/dev/null; then
+            echo "❌ ECR repository not found. Run bootstrap first!" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+          
+          echo "uri=${ECR_URI}" >> $GITHUB_OUTPUT
+          echo "✅ ECR repository verified" >> $GITHUB_STEP_SUMMARY
+
+      - name: Generate Image Tag
+        id: tag
+        run: |
+          if [ -n "${{ inputs.image_tag }}" ]; then
+            TAG="${{ inputs.image_tag }}"
+          else
+            SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+            TIMESTAMP=$(date +%Y%m%d%H%M%S)
+            TAG="${SHORT_SHA}-${TIMESTAMP}"
+          fi
+          
+          echo "value=${TAG}" >> $GITHUB_OUTPUT
+          echo "### Image Tag" >> $GITHUB_STEP_SUMMARY
+          echo "\`${TAG}\`" >> $GITHUB_STEP_SUMMARY
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # SECURITY SCANNING (PARALLEL)
+  # ══════════════════════════════════════════════════════════════════════════
+  security-scan:
+    name: "🔐 Security Scan"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # L454: Full history for Gitleaks
+
+      - name: Gitleaks Scan
+        uses: gitleaks/gitleaks-action@v2
+        continue-on-error: true  # Warn mode
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Grype SCA Scan
+        uses: anchore/scan-action@v3
+        continue-on-error: true  # Warn mode
+        with:
+          path: "."
+          fail-build: false
+          severity-cutoff: critical
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # BUILD & PUSH
+  # ══════════════════════════════════════════════════════════════════════════
+  build-push:
+    name: "🔨 Build & Push"
+    needs: [verify-bootstrap]
+    if: inputs.skip_build != true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and Push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: .opsera-clarity1/Dockerfile
+          push: true
+          tags: |
+            ${{ needs.verify-bootstrap.outputs.ecr_uri }}/${{ env.TENANT }}/${{ env.APP_NAME }}:${{ needs.verify-bootstrap.outputs.image_tag }}
+            ${{ needs.verify-bootstrap.outputs.ecr_uri }}/${{ env.TENANT }}/${{ env.APP_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Image Summary
+        run: |
+          echo "### 🐳 Docker Image" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "${{ needs.verify-bootstrap.outputs.ecr_uri }}/${{ env.TENANT }}/${{ env.APP_NAME }}:${{ needs.verify-bootstrap.outputs.image_tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # UPDATE MANIFESTS
+  # ══════════════════════════════════════════════════════════════════════════
+  update-manifests:
+    name: "📝 Update Manifests"
+    needs: [verify-bootstrap, build-push]
+    if: always() && needs.verify-bootstrap.result == 'success' && (needs.build-push.result == 'success' || needs.build-push.result == 'skipped')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Update Kustomization
+        run: |
+          IMAGE_TAG="${{ needs.verify-bootstrap.outputs.image_tag }}"
+          
+          # Update image tag in kustomization
+          sed -i "s/newTag: .*/newTag: ${IMAGE_TAG}/" \
+            .opsera-clarity1/k8s/overlays/dev/kustomization.yaml
+          
+          echo "### Manifest Update" >> $GITHUB_STEP_SUMMARY
+          echo "Updated image tag to: \`${IMAGE_TAG}\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Commit Changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git add .opsera-clarity1/k8s/overlays/dev/kustomization.yaml
+          
+          if git diff --cached --quiet; then
+            echo "No manifest changes"
+          else
+            git commit -m "deploy(dev): Update clarity1 to ${{ needs.verify-bootstrap.outputs.image_tag }} [skip ci]
+
+Triggered by: ${{ github.actor }}
+Commit: ${{ github.sha }}
+
+Co-Authored-By: Opsera Code-to-Cloud <noreply@opsera.io>"
+            
+            git pull --rebase origin main
+            git push origin main
+          fi
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # SYNC & DEPLOY
+  # ══════════════════════════════════════════════════════════════════════════
+  sync-deploy:
+    name: "🚀 Sync & Deploy"
+    needs: [verify-bootstrap, update-manifests]
+    if: always() && needs.update-manifests.result == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      deploy_success: ${{ steps.wait.outputs.success }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Configure Hub kubectl
+        run: |
+          aws eks update-kubeconfig --name ${{ env.HUB_CLUSTER }} --region ${{ env.AWS_REGION }}
+
+      - name: Force ArgoCD Sync (RULE 66)
+        run: |
+          APP_NAME="clarity1-dev"
+          
+          # Force refresh (clear cache)
+          kubectl annotate application $APP_NAME -n argocd \
+            argocd.argoproj.io/refresh=hard --overwrite
+          
+          echo "✅ ArgoCD sync triggered" >> $GITHUB_STEP_SUMMARY
+
+      - name: Configure Spoke kubectl
+        run: |
+          aws eks update-kubeconfig --name ${{ env.SPOKE_CLUSTER }} --region ${{ env.AWS_REGION }}
+
+      - name: Wait for Deployment
+        id: wait
+        timeout-minutes: 10
+        run: |
+          NAMESPACE="opsera-clarity1-dev"
+          
+          echo "Waiting for deployment rollout..."
+          
+          # Wait for namespace to exist
+          for i in {1..30}; do
+            if kubectl get namespace $NAMESPACE &>/dev/null; then
+              break
+            fi
+            echo "Waiting for namespace ($i/30)..."
+            sleep 10
+          done
+          
+          # Wait for pods
+          TIMEOUT=300
+          ELAPSED=0
+          while [ $ELAPSED -lt $TIMEOUT ]; do
+            READY=$(kubectl get pods -n $NAMESPACE -l app=clarity1 \
+              -o jsonpath='{.items[*].status.phase}' 2>/dev/null | tr ' ' '\n' | grep -c Running || echo 0)
+            TOTAL=$(kubectl get pods -n $NAMESPACE -l app=clarity1 --no-headers 2>/dev/null | wc -l || echo 0)
+            
+            if [ "$TOTAL" -gt 0 ] && [ "$READY" -eq "$TOTAL" ]; then
+              echo "✅ All pods running: $READY/$TOTAL" >> $GITHUB_STEP_SUMMARY
+              echo "success=true" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+            
+            echo "Pods: $READY/$TOTAL ready ($ELAPSED/$TIMEOUT seconds)..."
+            sleep 15
+            ELAPSED=$((ELAPSED + 15))
+          done
+          
+          echo "⚠️ Deployment timeout - check diagnostics" >> $GITHUB_STEP_SUMMARY
+          echo "success=false" >> $GITHUB_OUTPUT
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # SUMMARY
+  # ══════════════════════════════════════════════════════════════════════════
+  summary:
+    name: "📋 Deployment Summary"
+    needs: [verify-bootstrap, security-scan, build-push, update-manifests, sync-deploy]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate Summary
+        run: |
+          DEPLOY_SUCCESS="${{ needs.sync-deploy.outputs.deploy_success }}"
+          
+          if [ "$DEPLOY_SUCCESS" = "true" ]; then
+            STATUS="✅ SUCCESS"
+            EMOJI="🎉"
+          else
+            STATUS="⚠️ CHECK REQUIRED"
+            EMOJI="🔍"
+          fi
+          
+          cat << EOF >> $GITHUB_STEP_SUMMARY
+          
+          # ${EMOJI} Deployment Summary
+          
+          ## Status: ${STATUS}
+          
+          | Stage | Result |
+          |-------|--------|
+          | Bootstrap Verification | ${{ needs.verify-bootstrap.result }} |
+          | Security Scan | ${{ needs.security-scan.result }} |
+          | Build & Push | ${{ needs.build-push.result }} |
+          | Update Manifests | ${{ needs.update-manifests.result }} |
+          | Sync & Deploy | ${{ needs.sync-deploy.result }} |
+          
+          ## Details
+          - **Image Tag**: \`${{ needs.verify-bootstrap.outputs.image_tag }}\`
+          - **Environment**: \`dev\`
+          - **Namespace**: \`opsera-clarity1-dev\`
+          
+          ## Application URL
+          \`\`\`
+          https://opsera-clarity1-dev.agent.opsera.dev
+          \`\`\`
+          
+          ## Troubleshooting
+          If deployment failed, run diagnostics:
+          \`\`\`bash
+          gh workflow run "diagnostics-clarity1.yaml" -f environment=dev
+          \`\`\`
+          EOF

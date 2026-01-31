@@ -1,0 +1,418 @@
+# ════════════════════════════════════════════════════════════════════════════
+# BOOTSTRAP INFRASTRUCTURE - clarity1
+# Code-to-Cloud Enterprise v0.901
+# RULE 61: Auto-register spoke cluster with ArgoCD hub
+# RULE 63: Create ArgoCD repository secret with GH_PAT
+# ════════════════════════════════════════════════════════════════════════════
+
+name: "🚀 clarity1: Bootstrap Infrastructure"
+
+on:
+  workflow_dispatch:
+    inputs:
+      proceed:
+        description: '☑️ I confirm to proceed with bootstrap'
+        type: boolean
+        default: false
+        required: true
+      skip_spoke_registration:
+        description: 'Skip spoke cluster registration (if already done)'
+        type: boolean
+        default: false
+
+env:
+  APP_NAME: clarity1
+  TENANT: opsera
+  AWS_REGION: us-west-2
+  SPOKE_CLUSTER: opsera-usw2-np
+  HUB_CLUSTER: argocd-usw2
+  ENVIRONMENT: dev
+  NAMESPACE: opsera-clarity1-dev
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  # ══════════════════════════════════════════════════════════════════════════
+  # VALIDATION
+  # ══════════════════════════════════════════════════════════════════════════
+  validate:
+    name: "✅ Validate Configuration"
+    runs-on: ubuntu-latest
+    if: inputs.proceed == true
+    outputs:
+      repo_url: ${{ steps.repo.outputs.url }}
+      aws_account_id: ${{ steps.aws.outputs.account_id }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get Repository URL
+        id: repo
+        run: |
+          REPO_URL="https://github.com/${{ github.repository }}.git"
+          echo "url=${REPO_URL}" >> $GITHUB_OUTPUT
+          echo "### Repository" >> $GITHUB_STEP_SUMMARY
+          echo "URL: \`${REPO_URL}\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get AWS Account ID (RULE 7)
+        id: aws
+        run: |
+          # RULE 7: Always use dynamic account ID
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          echo "account_id=${ACCOUNT_ID}" >> $GITHUB_OUTPUT
+          echo "### AWS Account" >> $GITHUB_STEP_SUMMARY
+          echo "ID: \`${ACCOUNT_ID}\`" >> $GITHUB_STEP_SUMMARY
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # ECR REPOSITORY
+  # ══════════════════════════════════════════════════════════════════════════
+  create-ecr:
+    name: "📦 Create ECR Repository"
+    needs: [validate]
+    runs-on: ubuntu-latest
+    outputs:
+      ecr_uri: ${{ steps.ecr.outputs.uri }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Create ECR Repository
+        id: ecr
+        run: |
+          # RULE 101: ECR repositories use TENANT/APP pattern
+          REPO_NAME="${TENANT}/${APP_NAME}"
+          ACCOUNT_ID="${{ needs.validate.outputs.aws_account_id }}"
+          ECR_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          
+          echo "### ECR Repository" >> $GITHUB_STEP_SUMMARY
+          
+          # Check if repo exists
+          if aws ecr describe-repositories --repository-names "$REPO_NAME" 2>/dev/null; then
+            echo "✅ ECR repository already exists: \`${REPO_NAME}\`" >> $GITHUB_STEP_SUMMARY
+          else
+            aws ecr create-repository \
+              --repository-name "$REPO_NAME" \
+              --image-scanning-configuration scanOnPush=true \
+              --encryption-configuration encryptionType=AES256
+            echo "✅ ECR repository created: \`${REPO_NAME}\`" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "uri=${ECR_URI}" >> $GITHUB_OUTPUT
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # VERIFY SPOKE CLUSTER
+  # ══════════════════════════════════════════════════════════════════════════
+  verify-spoke:
+    name: "🔍 Verify Spoke Cluster"
+    needs: [validate]
+    runs-on: ubuntu-latest
+    outputs:
+      spoke_exists: ${{ steps.check.outputs.exists }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Check Spoke Cluster Exists (RULE 90)
+        id: check
+        run: |
+          echo "### Spoke Cluster Verification" >> $GITHUB_STEP_SUMMARY
+          
+          # RULE 90: Verify via direct API call
+          set +e
+          aws eks describe-cluster --name ${{ env.SPOKE_CLUSTER }} 2>/dev/null
+          RESULT=$?
+          set -e
+          
+          if [ $RESULT -eq 0 ]; then
+            echo "✅ Spoke cluster exists: \`${{ env.SPOKE_CLUSTER }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Spoke cluster NOT found: \`${{ env.SPOKE_CLUSTER }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # REGISTER SPOKE WITH ARGOCD HUB
+  # ══════════════════════════════════════════════════════════════════════════
+  register-spoke:
+    name: "🔗 Register Spoke with ArgoCD"
+    needs: [validate, verify-spoke]
+    if: needs.verify-spoke.outputs.spoke_exists == 'true' && inputs.skip_spoke_registration != true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Configure Hub Cluster kubectl
+        run: |
+          aws eks update-kubeconfig --name ${{ env.HUB_CLUSTER }} --region ${{ env.AWS_REGION }}
+
+      - name: Check if Spoke Already Registered
+        id: check-reg
+        run: |
+          if kubectl get secret "cluster-${{ env.SPOKE_CLUSTER }}" -n argocd &>/dev/null; then
+            echo "✅ Spoke already registered in ArgoCD" >> $GITHUB_STEP_SUMMARY
+            echo "registered=true" >> $GITHUB_OUTPUT
+          else
+            echo "📝 Spoke not registered - will register now" >> $GITHUB_STEP_SUMMARY
+            echo "registered=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Register Spoke Cluster (RULE 61)
+        if: steps.check-reg.outputs.registered == 'false'
+        run: |
+          # Get spoke cluster endpoint
+          SPOKE_ENDPOINT=$(aws eks describe-cluster \
+            --name ${{ env.SPOKE_CLUSTER }} \
+            --query 'cluster.endpoint' \
+            --output text)
+          
+          SPOKE_CA=$(aws eks describe-cluster \
+            --name ${{ env.SPOKE_CLUSTER }} \
+            --query 'cluster.certificateAuthority.data' \
+            --output text)
+          
+          # Configure spoke cluster for token
+          aws eks update-kubeconfig --name ${{ env.SPOKE_CLUSTER }} --region ${{ env.AWS_REGION }} --alias spoke
+          
+          # RULE 62: Multi-method token creation for K8s 1.24+
+          kubectl --context spoke create serviceaccount argocd-manager -n kube-system 2>/dev/null || true
+          kubectl --context spoke create clusterrolebinding argocd-manager \
+            --clusterrole=cluster-admin \
+            --serviceaccount=kube-system:argocd-manager 2>/dev/null || true
+          
+          # Create token (K8s 1.24+)
+          TOKEN=$(kubectl --context spoke create token argocd-manager -n kube-system --duration=87600h)
+          
+          # Switch back to hub
+          aws eks update-kubeconfig --name ${{ env.HUB_CLUSTER }} --region ${{ env.AWS_REGION }}
+          
+          # Create cluster secret in ArgoCD
+          cat <<EOF | kubectl apply -f -
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: cluster-${{ env.SPOKE_CLUSTER }}
+            namespace: argocd
+            labels:
+              argocd.argoproj.io/secret-type: cluster
+          type: Opaque
+          stringData:
+            name: ${{ env.SPOKE_CLUSTER }}
+            server: ${SPOKE_ENDPOINT}
+            config: |
+              {
+                "bearerToken": "${TOKEN}",
+                "tlsClientConfig": {
+                  "insecure": false,
+                  "caData": "${SPOKE_CA}"
+                }
+              }
+          EOF
+          
+          echo "✅ Spoke cluster registered with ArgoCD hub" >> $GITHUB_STEP_SUMMARY
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # CREATE ARGOCD REPOSITORY SECRET
+  # ══════════════════════════════════════════════════════════════════════════
+  create-repo-secret:
+    name: "🔐 Create ArgoCD Repo Secret"
+    needs: [validate, register-spoke]
+    if: always() && needs.validate.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Configure Hub kubectl
+        run: |
+          aws eks update-kubeconfig --name ${{ env.HUB_CLUSTER }} --region ${{ env.AWS_REGION }}
+
+      - name: Create Repository Secret (RULE 63)
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          SECRET_NAME="repo-${APP_NAME}"
+          REPO_URL="${{ needs.validate.outputs.repo_url }}"
+          
+          echo "### ArgoCD Repository Secret" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -z "$GH_PAT" ]; then
+            echo "❌ GH_PAT secret not configured" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+          
+          # Check if secret exists
+          if kubectl get secret "$SECRET_NAME" -n argocd &>/dev/null; then
+            echo "✅ Repository secret already exists" >> $GITHUB_STEP_SUMMARY
+          else
+            kubectl create secret generic "$SECRET_NAME" -n argocd \
+              --from-literal=type=git \
+              --from-literal=url="$REPO_URL" \
+              --from-literal=username=git \
+              --from-literal=password="$GH_PAT"
+            
+            kubectl label secret "$SECRET_NAME" -n argocd \
+              argocd.argoproj.io/secret-type=repository
+            
+            echo "✅ Repository secret created" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # UPDATE MANIFESTS WITH RESOLVED VALUES
+  # ══════════════════════════════════════════════════════════════════════════
+  update-manifests:
+    name: "📝 Update Manifests"
+    needs: [validate, create-ecr, create-repo-secret]
+    if: always() && needs.validate.result == 'success' && needs.create-ecr.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Update Placeholders (RULE 87)
+        run: |
+          ECR_URI="${{ needs.create-ecr.outputs.ecr_uri }}"
+          REPO_URL="${{ needs.validate.outputs.repo_url }}"
+          
+          # Update kustomization.yaml with ECR URI
+          sed -i "s|PLACEHOLDER_ECR_URI|${ECR_URI}|g" \
+            .opsera-clarity1/k8s/overlays/dev/kustomization.yaml
+          
+          # Update ArgoCD application with repo URL
+          sed -i "s|PLACEHOLDER_REPO_URL|${REPO_URL}|g" \
+            .opsera-clarity1/argocd/dev/application.yaml
+          
+          echo "### Manifest Updates" >> $GITHUB_STEP_SUMMARY
+          echo "- ECR URI: \`${ECR_URI}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Repo URL: \`${REPO_URL}\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Commit Changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git add .opsera-clarity1/
+          
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore: Bootstrap clarity1 infrastructure [skip ci]
+
+- Updated ECR URI in kustomization
+- Updated repo URL in ArgoCD application
+- Resolved all placeholder values
+
+Co-Authored-By: Opsera Code-to-Cloud <noreply@opsera.io>"
+            
+            git pull --rebase origin main
+            git push origin main
+          fi
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # APPLY ARGOCD APPLICATION
+  # ══════════════════════════════════════════════════════════════════════════
+  apply-argocd-app:
+    name: "🚀 Apply ArgoCD Application"
+    needs: [validate, update-manifests]
+    if: always() && needs.update-manifests.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main  # Get latest with updated manifests
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Configure Hub kubectl
+        run: |
+          aws eks update-kubeconfig --name ${{ env.HUB_CLUSTER }} --region ${{ env.AWS_REGION }}
+
+      - name: Apply ArgoCD Application
+        run: |
+          # Pull latest to get updated manifests
+          git pull origin main
+          
+          kubectl apply -f .opsera-clarity1/argocd/dev/application.yaml
+          
+          echo "### ArgoCD Application" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Application \`clarity1-dev\` created/updated" >> $GITHUB_STEP_SUMMARY
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # SUMMARY
+  # ══════════════════════════════════════════════════════════════════════════
+  summary:
+    name: "📋 Bootstrap Summary"
+    needs: [validate, create-ecr, verify-spoke, register-spoke, create-repo-secret, update-manifests, apply-argocd-app]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate Summary
+        run: |
+          cat << 'EOF' >> $GITHUB_STEP_SUMMARY
+          
+          # 🎉 Bootstrap Complete
+          
+          ## Configuration
+          | Setting | Value |
+          |---------|-------|
+          | **App Name** | `clarity1` |
+          | **Tenant** | `opsera` |
+          | **Environment** | `dev` |
+          | **Namespace** | `opsera-clarity1-dev` |
+          | **Spoke Cluster** | `opsera-usw2-np` |
+          | **Hub Cluster** | `argocd-usw2` |
+          
+          ## Next Steps
+          
+          1. **Trigger CI/CD**: Push code changes or run:
+             ```bash
+             gh workflow run "ci-build-push-clarity1.yaml"
+             ```
+          
+          2. **Monitor in ArgoCD**: Check application sync status
+          
+          3. **Access Application** (after deployment):
+             ```
+             https://opsera-clarity1-dev.agent.opsera.dev
+             ```
+          
+          ## Troubleshooting
+          Run diagnostics if issues occur:
+          ```bash
+          gh workflow run "diagnostics-clarity1.yaml" -f environment=dev
+          ```
+          EOF

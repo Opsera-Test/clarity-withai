@@ -1,0 +1,13 @@
+# ════════════════════════════════════════════════════════════════════════════
+# NAMESPACE - DEV Environment
+# RULE 100: Use tenant variable consistently
+# ════════════════════════════════════════════════════════════════════════════
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: opsera-clarity1-dev
+  labels:
+    app: clarity1
+    environment: dev
+    tenant: opsera

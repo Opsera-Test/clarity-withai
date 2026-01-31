@@ -1,0 +1,338 @@
+# ════════════════════════════════════════════════════════════════════════════
+# DIAGNOSTICS WORKFLOW - clarity1
+# Code-to-Cloud Enterprise v0.901
+# RULE 50: MANDATORY diagnostics workflow
+# ════════════════════════════════════════════════════════════════════════════
+
+name: "🔬 clarity1: Diagnostics"
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        type: choice
+        options: [dev]
+        default: dev
+      diagnostic_type:
+        description: 'Type of diagnostic'
+        type: choice
+        options:
+          - full-pipeline
+          - pod-logs
+          - argocd-debug
+          - force-sync
+          - cert-debug
+        default: full-pipeline
+
+env:
+  APP_NAME: clarity1
+  TENANT: opsera
+  AWS_REGION: us-west-2
+  SPOKE_CLUSTER: opsera-usw2-np
+  HUB_CLUSTER: argocd-usw2
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  # ══════════════════════════════════════════════════════════════════════════
+  # FULL PIPELINE DIAGNOSTICS
+  # ══════════════════════════════════════════════════════════════════════════
+  full-pipeline:
+    name: "🔍 Full Pipeline Diagnostics"
+    runs-on: ubuntu-latest
+    if: inputs.diagnostic_type == 'full-pipeline'
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: "1️⃣ ECR Repository Check"
+        run: |
+          echo "### 📦 Stage 1: ECR Repository" >> $GITHUB_STEP_SUMMARY
+          REPO="${TENANT}/${APP_NAME}"
+          
+          if aws ecr describe-repositories --repository-names "$REPO" 2>/dev/null; then
+            echo "✅ ECR repository exists: \`${REPO}\`" >> $GITHUB_STEP_SUMMARY
+            
+            echo "**Recent Images:**" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            aws ecr describe-images --repository-name "$REPO" \
+              --query 'sort_by(imageDetails,&imagePushedAt)[-5:].{Tag:imageTags[0],Pushed:imagePushedAt}' \
+              --output table >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "No images found"
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ ECR repository NOT found: \`${REPO}\`" >> $GITHUB_STEP_SUMMARY
+            echo "**Fix:** Run bootstrap workflow first" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: "2️⃣ EKS Cluster Check"
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🎯 Stage 2: EKS Clusters" >> $GITHUB_STEP_SUMMARY
+          
+          # Check Hub Cluster
+          if aws eks describe-cluster --name $HUB_CLUSTER 2>/dev/null; then
+            echo "✅ Hub cluster exists: \`${HUB_CLUSTER}\`" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Hub cluster NOT found: \`${HUB_CLUSTER}\`" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Check Spoke Cluster
+          if aws eks describe-cluster --name $SPOKE_CLUSTER 2>/dev/null; then
+            echo "✅ Spoke cluster exists: \`${SPOKE_CLUSTER}\`" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Spoke cluster NOT found: \`${SPOKE_CLUSTER}\`" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Configure Spoke kubectl
+        run: |
+          aws eks update-kubeconfig --name $SPOKE_CLUSTER --region $AWS_REGION
+
+      - name: "3️⃣ Namespace & Pods Check"
+        run: |
+          NAMESPACE="opsera-${APP_NAME}-${{ inputs.environment }}"
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🏷️ Stage 3: Namespace & Pods" >> $GITHUB_STEP_SUMMARY
+          
+          if kubectl get namespace $NAMESPACE 2>/dev/null; then
+            echo "✅ Namespace exists: \`${NAMESPACE}\`" >> $GITHUB_STEP_SUMMARY
+            
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Pods:**" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            kubectl get pods -n $NAMESPACE -o wide 2>/dev/null || echo "No pods found"
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Services:**" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            kubectl get svc -n $NAMESPACE 2>/dev/null || echo "No services found"
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Ingress:**" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            kubectl get ingress -n $NAMESPACE 2>/dev/null || echo "No ingress found"
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Namespace NOT found: \`${NAMESPACE}\`" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Configure Hub kubectl
+        run: |
+          aws eks update-kubeconfig --name $HUB_CLUSTER --region $AWS_REGION
+
+      - name: "4️⃣ ArgoCD Application Check"
+        run: |
+          APP="${APP_NAME}-${{ inputs.environment }}"
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔄 Stage 4: ArgoCD Application" >> $GITHUB_STEP_SUMMARY
+          
+          if kubectl get application $APP -n argocd 2>/dev/null; then
+            echo "✅ ArgoCD Application exists: \`${APP}\`" >> $GITHUB_STEP_SUMMARY
+            
+            SYNC=$(kubectl get application $APP -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
+            HEALTH=$(kubectl get application $APP -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
+            
+            echo "- **Sync Status:** \`${SYNC}\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **Health Status:** \`${HEALTH}\`" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ ArgoCD Application NOT found: \`${APP}\`" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: "5️⃣ Health Endpoint Check"
+        continue-on-error: true
+        run: |
+          URL="https://opsera-${APP_NAME}-${{ inputs.environment }}.agent.opsera.dev"
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🏥 Stage 5: Health Check" >> $GITHUB_STEP_SUMMARY
+          
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$URL" 2>/dev/null || echo "000")
+          
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "✅ Application healthy: HTTP ${HTTP_CODE}" >> $GITHUB_STEP_SUMMARY
+          elif [ "$HTTP_CODE" = "000" ]; then
+            echo "❌ Application unreachable (DNS not configured or app not deployed)" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ Application returned: HTTP ${HTTP_CODE}" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "- **URL:** \`${URL}\`" >> $GITHUB_STEP_SUMMARY
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # POD LOGS
+  # ══════════════════════════════════════════════════════════════════════════
+  pod-logs:
+    name: "📋 Pod Logs"
+    runs-on: ubuntu-latest
+    if: inputs.diagnostic_type == 'pod-logs'
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Configure kubectl
+        run: |
+          aws eks update-kubeconfig --name $SPOKE_CLUSTER --region $AWS_REGION
+
+      - name: Get Pod Logs
+        run: |
+          NAMESPACE="opsera-${APP_NAME}-${{ inputs.environment }}"
+          
+          echo "### 📋 Pod Logs - ${NAMESPACE}" >> $GITHUB_STEP_SUMMARY
+          
+          for POD in $(kubectl get pods -n $NAMESPACE -l app=$APP_NAME -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "#### Pod: \`$POD\`" >> $GITHUB_STEP_SUMMARY
+            
+            # Current logs
+            echo "**Current Logs (last 50 lines):**" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            kubectl logs $POD -n $NAMESPACE --tail=50 2>/dev/null || echo "No logs available"
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            
+            # Previous container logs
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Previous Container (if crashed):**" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            kubectl logs $POD -n $NAMESPACE --previous --tail=20 2>/dev/null || echo "No previous logs"
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          done
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # ARGOCD DEBUG
+  # ══════════════════════════════════════════════════════════════════════════
+  argocd-debug:
+    name: "🔄 ArgoCD Debug"
+    runs-on: ubuntu-latest
+    if: inputs.diagnostic_type == 'argocd-debug'
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Configure Hub kubectl
+        run: |
+          aws eks update-kubeconfig --name $HUB_CLUSTER --region $AWS_REGION
+
+      - name: Debug ArgoCD Application
+        run: |
+          APP="${APP_NAME}-${{ inputs.environment }}"
+          
+          echo "### 🔄 ArgoCD Debug: ${APP}" >> $GITHUB_STEP_SUMMARY
+          
+          echo "**Application Status:**" >> $GITHUB_STEP_SUMMARY
+          echo '```yaml' >> $GITHUB_STEP_SUMMARY
+          kubectl get application $APP -n argocd -o yaml 2>/dev/null || echo "Application not found"
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Recent Events:**" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          kubectl get events -n argocd --field-selector involvedObject.name=$APP \
+            --sort-by='.lastTimestamp' 2>/dev/null | tail -20 || echo "No events"
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # FORCE SYNC
+  # ══════════════════════════════════════════════════════════════════════════
+  force-sync:
+    name: "⚡ Force Sync"
+    runs-on: ubuntu-latest
+    if: inputs.diagnostic_type == 'force-sync'
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Configure Hub kubectl
+        run: |
+          aws eks update-kubeconfig --name $HUB_CLUSTER --region $AWS_REGION
+
+      - name: Force Sync ArgoCD
+        run: |
+          APP="${APP_NAME}-${{ inputs.environment }}"
+          
+          echo "### ⚡ Force Sync: ${APP}" >> $GITHUB_STEP_SUMMARY
+          
+          # Hard refresh (clear cache)
+          kubectl annotate application $APP -n argocd \
+            argocd.argoproj.io/refresh=hard --overwrite 2>/dev/null || true
+          
+          echo "✅ Force sync triggered" >> $GITHUB_STEP_SUMMARY
+          
+          sleep 30
+          
+          # Check status
+          SYNC=$(kubectl get application $APP -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
+          HEALTH=$(kubectl get application $APP -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
+          
+          echo "**After Sync:**" >> $GITHUB_STEP_SUMMARY
+          echo "- Sync: \`${SYNC}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Health: \`${HEALTH}\`" >> $GITHUB_STEP_SUMMARY
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # CERT-MANAGER DEBUG
+  # ══════════════════════════════════════════════════════════════════════════
+  cert-debug:
+    name: "🔐 Certificate Debug"
+    runs-on: ubuntu-latest
+    if: inputs.diagnostic_type == 'cert-debug'
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Configure kubectl
+        run: |
+          aws eks update-kubeconfig --name $SPOKE_CLUSTER --region $AWS_REGION
+
+      - name: Debug Certificates
+        run: |
+          NAMESPACE="opsera-${APP_NAME}-${{ inputs.environment }}"
+          
+          echo "### 🔐 Certificate Debug" >> $GITHUB_STEP_SUMMARY
+          
+          echo "**cert-manager pods:**" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          kubectl get pods -n cert-manager 2>/dev/null || echo "cert-manager not found"
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**ClusterIssuer:**" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          kubectl get clusterissuer 2>/dev/null || echo "No ClusterIssuers"
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Certificates in namespace:**" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          kubectl get certificates -n $NAMESPACE 2>/dev/null || echo "No certificates"
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**TLS Secret:**" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          kubectl get secret opsera-wildcard-tls -n ingress-nginx 2>/dev/null || echo "Wildcard TLS secret not found"
+          echo '```' >> $GITHUB_STEP_SUMMARY
