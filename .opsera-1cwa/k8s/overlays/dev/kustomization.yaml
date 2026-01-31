@@ -19,7 +19,7 @@ labels:
 images:
   - name: 1cwa
     newName: 792373136340.dkr.ecr.us-west-2.amazonaws.com/opsera/1cwa
-    newTag: latest
+    newTag: 454c827-20260131164138
 
 patches:
   # Patch Ingress hostname for DEV
