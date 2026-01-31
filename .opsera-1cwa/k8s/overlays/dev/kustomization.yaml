@@ -18,7 +18,7 @@ labels:
 
 images:
   - name: 1cwa
-    newName: PLACEHOLDER_ECR_URI
+    newName: 792373136340.dkr.ecr.us-west-2.amazonaws.com/opsera/1cwa
     newTag: latest
 
 patches:

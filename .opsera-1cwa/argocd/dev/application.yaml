@@ -19,7 +19,7 @@ spec:
 
   source:
     # RULE 58: Resolved placeholder - actual repo URL
-    repoURL: PLACEHOLDER_REPO_URL
+    repoURL: https://github.com/opsera-agentic/clarity-withai
     targetRevision: HEAD
     path: .opsera-1cwa/k8s/overlays/dev
 
