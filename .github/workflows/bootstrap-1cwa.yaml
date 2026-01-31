@@ -11,10 +11,13 @@ on:
       environment:
         description: 'Environment to bootstrap'
         type: choice
-        options: [dev, qa, staging]
+        options:
+          - dev
+          - qa
+          - staging
         default: dev
       proceed:
-        description: 'Confirm bootstrap (type "yes")'
+        description: 'Confirm bootstrap'
         required: true
         type: boolean
         default: false

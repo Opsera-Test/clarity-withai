@@ -21,7 +21,10 @@ on:
       environment:
         description: 'Target environment'
         type: choice
-        options: [dev, qa, staging]
+        options:
+          - dev
+          - qa
+          - staging
         default: dev
 
 env:
