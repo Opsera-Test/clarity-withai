@@ -1,8 +1,0 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: opsera-cwa-6-dev
-  labels:
-    app: cwa-6
-    environment: dev
-    tenant: opsera
