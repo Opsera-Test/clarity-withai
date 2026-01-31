@@ -17,7 +17,7 @@ commonLabels:
 
 images:
   - name: clarity1
-    newName: PLACEHOLDER_ECR_URI/opsera/clarity1
+    newName: 792373136340.dkr.ecr.us-west-2.amazonaws.com/opsera/clarity1
     newTag: latest
 
 patches:
