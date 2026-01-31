@@ -4,7 +4,7 @@
 # RULE 66: Force ArgoCD sync after manifest updates
 # ════════════════════════════════════════════════════════════════════════════
 
-name: "🔄 clarity1: CI Build & Push"
+name: "CI Build Push clarity1"
 
 on:
   push:

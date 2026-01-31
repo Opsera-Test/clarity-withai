@@ -4,7 +4,7 @@
 # RULE 50: MANDATORY diagnostics workflow
 # ════════════════════════════════════════════════════════════════════════════
 
-name: "🔬 clarity1: Diagnostics"
+name: "Diagnostics clarity1"
 
 on:
   workflow_dispatch:
