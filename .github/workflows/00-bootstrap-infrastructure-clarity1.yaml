@@ -5,7 +5,7 @@
 # RULE 63: Create ArgoCD repository secret with GH_PAT
 # ════════════════════════════════════════════════════════════════════════════
 
-name: "🚀 clarity1: Bootstrap Infrastructure"
+name: "clarity1: Bootstrap Infrastructure"
 
 on:
   workflow_dispatch:
