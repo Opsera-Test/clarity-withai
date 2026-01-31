@@ -249,10 +249,10 @@ jobs:
           echo '```' >> $GITHUB_STEP_SUMMARY
 
   # ══════════════════════════════════════════════════════════════════════════
-  # FORCE SYNC
+  # FORCE SYNC - RULE 110: Delete deployment first to reset immutable fields
   # ══════════════════════════════════════════════════════════════════════════
   force-sync:
-    name: "⚡ Force Sync"
+    name: "Force Sync with Deployment Reset"
     runs-on: ubuntu-latest
     if: inputs.diagnostic_type == 'force-sync'
     steps:
@@ -263,6 +263,21 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Configure Spoke kubectl
+        run: |
+          aws eks update-kubeconfig --name $SPOKE_CLUSTER --region $AWS_REGION
+
+      - name: Delete Deployment (RULE 110)
+        run: |
+          NAMESPACE="opsera-${APP_NAME}-${{ inputs.environment }}"
+          
+          echo "### RULE 110: Delete Deployment First" >> $GITHUB_STEP_SUMMARY
+          
+          # Delete deployment to reset immutable selector fields
+          kubectl delete deployment ${APP_NAME} -n $NAMESPACE 2>/dev/null || echo "Deployment not found (OK)"
+          
+          echo "Deployment deleted - immutable fields will be reset on sync" >> $GITHUB_STEP_SUMMARY
+
       - name: Configure Hub kubectl
         run: |
           aws eks update-kubeconfig --name $HUB_CLUSTER --region $AWS_REGION
@@ -271,23 +286,34 @@ jobs:
         run: |
           APP="${APP_NAME}-${{ inputs.environment }}"
           
-          echo "### ⚡ Force Sync: ${APP}" >> $GITHUB_STEP_SUMMARY
+          echo "### Force Sync: ${APP}" >> $GITHUB_STEP_SUMMARY
           
           # Hard refresh (clear cache)
           kubectl annotate application $APP -n argocd \
             argocd.argoproj.io/refresh=hard --overwrite 2>/dev/null || true
           
-          echo "✅ Force sync triggered" >> $GITHUB_STEP_SUMMARY
+          echo "Force sync triggered" >> $GITHUB_STEP_SUMMARY
           
-          sleep 30
+          sleep 60
           
           # Check status
           SYNC=$(kubectl get application $APP -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
           HEALTH=$(kubectl get application $APP -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
           
           echo "**After Sync:**" >> $GITHUB_STEP_SUMMARY
-          echo "- Sync: \`${SYNC}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Health: \`${HEALTH}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Sync: ${SYNC}" >> $GITHUB_STEP_SUMMARY
+          echo "- Health: ${HEALTH}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Verify Pods Running
+        run: |
+          aws eks update-kubeconfig --name $SPOKE_CLUSTER --region $AWS_REGION
+          NAMESPACE="opsera-${APP_NAME}-${{ inputs.environment }}"
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Pod Status After Sync" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          kubectl get pods -n $NAMESPACE -o wide 2>/dev/null || echo "No pods found"
+          echo '```' >> $GITHUB_STEP_SUMMARY
 
   # ══════════════════════════════════════════════════════════════════════════
   # CERT-MANAGER DEBUG
