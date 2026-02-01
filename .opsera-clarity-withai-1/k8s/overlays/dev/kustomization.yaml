@@ -33,6 +33,3 @@ patches:
       - op: replace
         path: /spec/rules/0/host
         value: opsera-clarity-withai-1-dev.agent.opsera.dev
-      - op: replace
-        path: /spec/tls/0/hosts/0
-        value: opsera-clarity-withai-1-dev.agent.opsera.dev
