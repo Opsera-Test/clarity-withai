@@ -32,27 +32,15 @@ COPY .opsera-clarity-withai-1/nginx.conf /etc/nginx/conf.d/default.conf
 # Copy built assets from builder stage
 COPY --from=builder /app/dist /usr/share/nginx/html
 
-# RULE 33: NGINX container permissions
-USER root
-RUN mkdir -p /var/cache/nginx/client_temp \
-    /var/cache/nginx/proxy_temp \
-    /var/cache/nginx/fastcgi_temp \
-    /var/cache/nginx/uwsgi_temp \
-    /var/cache/nginx/scgi_temp \
-    && chmod -R 777 /var/cache/nginx \
-    && chmod -R 777 /var/log/nginx \
-    && touch /var/run/nginx.pid \
-    && chmod 777 /var/run/nginx.pid
+# nginx-unprivileged already has correct permissions, no need to modify
+# Port 8080 is used because non-root users cannot bind to ports < 1024
 
-# Switch back to non-root user
-USER nginx
+# Expose port 8080 (nginx-unprivileged default)
+EXPOSE 8080
 
-# Expose port 80
-EXPOSE 80
-
-# Health check
+# Health check on port 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:80/ || exit 1
+    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/ || exit 1
 
 # Start nginx
 CMD ["nginx", "-g", "daemon off;"]
