@@ -54,6 +54,9 @@ spec:
             timeoutSeconds: 3
             failureThreshold: 3
           securityContext:
+            # nginx-unprivileged uses UID 101 for the nginx user
+            runAsUser: 101
+            runAsGroup: 101
             runAsNonRoot: true
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: false
