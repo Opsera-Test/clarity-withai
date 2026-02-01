@@ -23,7 +23,7 @@ replicas:
 images:
   - name: clarity-withai-1
     newName: 792373136340.dkr.ecr.us-west-2.amazonaws.com/opsera/clarity-withai-1
-    newTag: b4965e2-20260201002636
+    newTag: 076cf55-20260201004242
 
 patches:
   - target:
