@@ -31,7 +31,7 @@ export function WelcomeMessage() {
       </div>
       
       <h2 className="text-2xl font-semibold text-foreground mb-2">
-        Welcome to Clarity AI
+        Welcome to Clarity with AI
       </h2>
       <p className="text-muted-foreground max-w-md mx-auto mb-8">
         Your explanation-first AI assistant. Every response is designed for 

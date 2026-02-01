@@ -9,7 +9,7 @@ export function ChatHeader() {
             <span className="text-primary-foreground font-bold text-lg">C</span>
           </div>
           <div>
-            <h1 className="font-semibold text-foreground">Clarity AI</h1>
+            <h1 className="font-semibold text-foreground">Clarity with AI</h1>
             <p className="text-xs text-muted-foreground">Explanation-first assistant</p>
           </div>
         </div>
