@@ -77,6 +77,11 @@ jobs:
     needs: [build-push]
     steps:
       - uses: actions/checkout@v4
+      - name: Pull latest (before making changes – RULE 143)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git pull --rebase origin main
       - name: Pre-flight – trim AWS secrets (avoid Invalid header value)
         run: |
           echo "AWS_ACCESS_KEY_ID=$(echo -n "${{ secrets.AWS_ACCESS_KEY_ID }}" | tr -d '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')" >> $GITHUB_ENV
@@ -100,9 +105,6 @@ jobs:
           sed -i "s|newName:.*|newName: ${ECR_URI}|g" kustomization.yaml
       - name: Commit and push
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git pull --rebase origin main
           git add .opsera-${{ env.APP_NAME }}/k8s/overlays/${{ env.ENV }}/kustomization.yaml
           git diff --staged --quiet || git commit -m "chore(opsera): deploy ${{ env.APP_NAME }} ${{ env.ENV }} - ${{ needs.build-push.outputs.image_tag }}"
           git push origin main
