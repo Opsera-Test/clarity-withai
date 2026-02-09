@@ -6,7 +6,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/PLACEHOLDER_GH_ORG/PLACEHOLDER_GH_REPO.git
+    repoURL: https://github.com/opsera-agentic/clarity-withai.git
     path: .opsera-claritywithai-0209/k8s/overlays/dev
     targetRevision: main
   destination:
