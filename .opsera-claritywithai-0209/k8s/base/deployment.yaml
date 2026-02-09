@@ -14,9 +14,10 @@ spec:
       labels:
         app: claritywithai-0209
     spec:
-      runAsNonRoot: true
-      runAsUser: 101
-      runAsGroup: 101
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
       imagePullSecrets:
         - name: ecr-pull-secret
       containers:
