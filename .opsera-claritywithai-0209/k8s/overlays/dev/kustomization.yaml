@@ -6,7 +6,7 @@ resources:
 images:
   - name: 792373136340.dkr.ecr.us-west-2.amazonaws.com/claritywithai-0209
     newName: 792373136340.dkr.ecr.us-west-2.amazonaws.com/claritywithai-0209
-    newTag: dev-68c20f87-20260209225435
+    newTag: dev-4aede6f0-20260209225827
 replicas:
   - name: claritywithai-0209
     count: 1
