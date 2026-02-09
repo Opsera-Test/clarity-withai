@@ -5,8 +5,8 @@ resources:
   - ../../base
 images:
   - name: PLACEHOLDER_ECR_URI
-    newName: PLACEHOLDER_ECR_URI
-    newTag: dev-placeholder
+    newName: 792373136340.dkr.ecr.us-west-2.amazonaws.com/claritywithai-0209
+    newTag: dev-5a45eb96-20260209231414
 replicas:
   - name: claritywithai-0209
     count: 1
