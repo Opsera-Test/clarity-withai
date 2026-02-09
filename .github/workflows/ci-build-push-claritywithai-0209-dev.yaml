@@ -169,5 +169,67 @@ jobs:
   trigger-landscape:
     needs: [deploy-dev]
     if: success()
-    uses: ./.github/workflows/deployment-landscape.yaml
-    secrets: inherit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pre-flight – trim AWS secrets
+        run: |
+          echo "AWS_ACCESS_KEY_ID=$(echo -n "${{ secrets.AWS_ACCESS_KEY_ID }}" | tr -d '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')" >> $GITHUB_ENV
+          echo "AWS_SECRET_ACCESS_KEY=$(echo -n "${{ secrets.AWS_SECRET_ACCESS_KEY }}" | tr -d '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')" >> $GITHUB_ENV
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: azure/setup-kubectl@v3
+      - name: Configure kubeconfig (EKS spoke)
+        run: |
+          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.SPOKE_CLUSTER }} --kubeconfig $(pwd)/kubeconfig
+          export KUBECONFIG=$(pwd)/kubeconfig
+          echo "KUBECONFIG=$(pwd)/kubeconfig" >> $GITHUB_ENV
+      - name: Collect landscape
+        id: collect
+        run: |
+          mkdir -p .opsera-claritywithai-0209/.deployments/landscapes
+          FILE_TS=$(date -u +%Y-%m-%dT%H%M%S)
+          echo "file_ts=${FILE_TS}" >> $GITHUB_OUTPUT
+          LANDSCAPE=".opsera-claritywithai-0209/.deployments/LANDSCAPE.md"
+          echo "# Deployment Landscape - claritywithai-0209" > "$LANDSCAPE"
+          echo "Generated: $(date -u +%Y-%m-%d\ %H:%M\ UTC)" >> "$LANDSCAPE"
+          echo "Commit: ${GITHUB_SHA::7}" >> "$LANDSCAPE"
+          echo "" >> "$LANDSCAPE"
+          echo "## Pods" >> "$LANDSCAPE"
+          kubectl get pods -n opsera-claritywithai-0209-dev -l app=claritywithai-0209 -o wide 2>/dev/null >> "$LANDSCAPE" || true
+          echo "" >> "$LANDSCAPE"
+          echo "## Service" >> "$LANDSCAPE"
+          kubectl get svc -n opsera-claritywithai-0209-dev -l app=claritywithai-0209 2>/dev/null >> "$LANDSCAPE" || true
+          cp "$LANDSCAPE" ".opsera-claritywithai-0209/.deployments/landscapes/${FILE_TS}.md"
+      - name: Update deployments manifest
+        run: |
+          MANIFEST=".opsera-claritywithai-0209/.deployments/deployments-manifest.json"
+          FILE_TS="${{ steps.collect.outputs.file_ts }}"
+          if [ ! -f "$MANIFEST" ]; then echo '{"entries":[]}' > "$MANIFEST"; fi
+          ENTRY=$(jq -n --arg ts "$FILE_TS" --arg commit "${GITHUB_SHA::7}" --arg env "dev" '{timestamp:$ts,commit:$commit,environment:$env,status:"LIVE",landscapeFile:("landscapes/"+$ts+".md")}')
+          jq --argjson e "$ENTRY" '.entries |= [$e] + .[0:49]' "$MANIFEST" > "${MANIFEST}.tmp" && mv "${MANIFEST}.tmp" "$MANIFEST"
+      - name: Generate HTML landing
+        env:
+          FILE_TS: ${{ steps.collect.outputs.file_ts }}
+        run: |
+          python3 -c "
+          import os
+          ts = os.environ.get('FILE_TS', 'unknown')
+          os.makedirs('.opsera-claritywithai-0209/.deployments', exist_ok=True)
+          html = '''<!DOCTYPE html><html lang=\"en\" data-theme=\"dark\"><head><meta charset=\"UTF-8\"/><title>Landscape - claritywithai-0209</title><style>:root{--bg:#0a0a0a;--fg:#fafafa;}</style></head><body><h1>Deployment Landscape</h1><p style=\"color:#22c55e\">LIVE</p><p>Snapshot: ''' + ts + '''</p><p><a href=\"landscapes/''' + ts + '''.md\">Latest</a></p></body></html>'''
+          open('.opsera-claritywithai-0209/.deployments/index.html', 'w').write(html)
+          "
+      - name: Commit landscape (RULE 172)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .opsera-claritywithai-0209/.deployments/
+          git stash
+          git pull --rebase origin main
+          git stash pop || true
+          git add .opsera-claritywithai-0209/.deployments/
+          git diff --cached --quiet || git commit -m "docs: update deployment landscape for claritywithai-0209 [skip ci]"
+          git push origin main || echo "Push skipped" | tee -a $GITHUB_STEP_SUMMARY
