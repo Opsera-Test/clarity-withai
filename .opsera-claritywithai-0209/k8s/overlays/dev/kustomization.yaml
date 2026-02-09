@@ -4,9 +4,9 @@ namespace: opsera-claritywithai-0209-dev
 resources:
   - ../../base
 images:
-  - name: PLACEHOLDER_ECR_URI
-    newName: PLACEHOLDER_ECR_URI
-    newTag: dev-placeholder
+  - name: 792373136340.dkr.ecr.us-west-2.amazonaws.com/claritywithai-0209
+    newName: 792373136340.dkr.ecr.us-west-2.amazonaws.com/claritywithai-0209
+    newTag: dev-68c20f87-20260209225435
 replicas:
   - name: claritywithai-0209
     count: 1
