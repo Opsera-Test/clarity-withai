@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: claritywithai-0209
+  labels:
+    app: claritywithai-0209
+spec:
+  selector:
+    app: claritywithai-0209
+  ports:
+    - port: 80
+      targetPort: 8080
+      name: http
+  type: ClusterIP

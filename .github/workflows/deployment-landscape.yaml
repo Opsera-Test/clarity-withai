@@ -1,0 +1,99 @@
+# Deployment Landscape - post-deploy dashboard (RULE 172 commit pattern)
+name: Deployment Landscape
+on:
+  workflow_dispatch:
+  workflow_call:
+  schedule:
+    - cron: '0 */6 * * *'
+permissions:
+  contents: write
+  id-token: write
+  actions: read
+env:
+  APP_NAME: claritywithai-0209
+  TENANT: opsera
+  AWS_REGION: us-west-2
+  SPOKE_CLUSTER: opsera-usw2-np
+  NAMESPACE_DEV: opsera-claritywithai-0209-dev
+
+jobs:
+  landscape:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: azure/setup-kubectl@v3
+      - name: Configure kubeconfig
+        run: |
+          if [ -n "${{ secrets.KUBECONFIG_SPOKE }}" ]; then
+            echo "${{ secrets.KUBECONFIG_SPOKE }}" | base64 -d > kubeconfig
+            echo "KUBECONFIG=$(pwd)/kubeconfig" >> $GITHUB_ENV
+          fi
+      - name: Collect landscape
+        id: collect
+        run: |
+          mkdir -p .opsera-${{ env.APP_NAME }}/.deployments/landscapes
+          FILE_TS=$(date -u +%Y-%m-%dT%H%M%S)
+          echo "file_ts=${FILE_TS}" >> $GITHUB_OUTPUT
+          LANDSCAPE=".opsera-${{ env.APP_NAME }}/.deployments/LANDSCAPE.md"
+          echo "# Deployment Landscape - ${{ env.APP_NAME }}" > "$LANDSCAPE"
+          echo "Generated: $(date -u +%Y-%m-%d\ %H:%M\ UTC)" >> "$LANDSCAPE"
+          echo "Commit: ${GITHUB_SHA::7}" >> "$LANDSCAPE"
+          echo "" >> "$LANDSCAPE"
+          if [ -n "${KUBECONFIG:-}" ]; then
+            echo "## Pods" >> "$LANDSCAPE"
+            kubectl get pods -n ${{ env.NAMESPACE_DEV }} -l app=${{ env.APP_NAME }} -o wide 2>/dev/null >> "$LANDSCAPE" || true
+            echo "" >> "$LANDSCAPE"
+            echo "## Service" >> "$LANDSCAPE"
+            kubectl get svc -n ${{ env.NAMESPACE_DEV }} -l app=${{ env.APP_NAME }} 2>/dev/null >> "$LANDSCAPE" || true
+            echo "" >> "$LANDSCAPE"
+            echo "## Ingress" >> "$LANDSCAPE"
+            kubectl get ingress -n ${{ env.NAMESPACE_DEV }} 2>/dev/null >> "$LANDSCAPE" || true
+          else
+            echo "KUBECONFIG not set; cluster details skipped." >> "$LANDSCAPE"
+          fi
+          cp "$LANDSCAPE" ".opsera-${{ env.APP_NAME }}/.deployments/landscapes/${FILE_TS}.md"
+      - name: Update deployments manifest
+        run: |
+          MANIFEST=".opsera-${{ env.APP_NAME }}/.deployments/deployments-manifest.json"
+          FILE_TS="${{ steps.collect.outputs.file_ts }}"
+          if [ ! -f "$MANIFEST" ]; then
+            echo '{"entries":[]}' > "$MANIFEST"
+          fi
+          # Prepend new entry (keep last 50)
+          ENTRY=$(jq -n \
+            --arg ts "$FILE_TS" \
+            --arg commit "${GITHUB_SHA::7}" \
+            --arg env "dev" \
+            '{timestamp:$ts,commit:$commit,environment:$env,status:"LIVE",landscapeFile:("landscapes/"+$ts+".md")}')
+          jq --argjson e "$ENTRY" '.entries |= [$e] + .[0:49]' "$MANIFEST" > "${MANIFEST}.tmp" && mv "${MANIFEST}.tmp" "$MANIFEST"
+      - name: Generate HTML landing
+        env:
+          FILE_TS: ${{ steps.collect.outputs.file_ts }}
+        run: |
+          python3 << 'PYEOF'
+          import os
+          ts = os.environ.get("FILE_TS", "unknown")
+          html = f"""<!DOCTYPE html>
+          <html lang="en" data-theme="dark"><head><meta charset="UTF-8"/><title>Landscape - claritywithai-0209</title>
+          <style>:root{{--bg:#0a0a0a;--fg:#fafafa;--border:#333;}} body{{font-family:monospace;background:var(--bg);color:var(--fg);margin:1rem;}} .status{{color:#22c55e;}}</style></head>
+          <body><h1>Deployment Landscape</h1><p class="status">LIVE</p><p>Snapshot: {ts}</p><p><a href="landscapes/{ts}.md">Latest</a></p></body></html>"""
+          os.makedirs(".opsera-claritywithai-0209/.deployments", exist_ok=True)
+          with open(".opsera-claritywithai-0209/.deployments/index.html", "w") as f:
+              f.write(html)
+          PYEOF
+      - name: Commit landscape (RULE 172)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .opsera-${{ env.APP_NAME }}/.deployments/
+          git stash
+          git pull --rebase origin main
+          git stash pop || true
+          git add .opsera-${{ env.APP_NAME }}/.deployments/
+          git diff --cached --quiet || git commit -m "docs: update deployment landscape for ${{ env.APP_NAME }} [skip ci]"
+          git push origin main || echo "Push skipped (no changes or conflict)" | tee -a $GITHUB_STEP_SUMMARY
