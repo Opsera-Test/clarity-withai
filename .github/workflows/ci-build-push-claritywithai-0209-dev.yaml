@@ -100,7 +100,7 @@ jobs:
         run: |
           ECR_URI="${{ steps.aws.outputs.account_id }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.APP_NAME }}"
           cd .opsera-${{ env.APP_NAME }}/k8s/overlays/${{ env.ENV }}
-          sed -i "s|PLACEHOLDER_ECR_URI|${ECR_URI}|g" kustomization.yaml
+          # Only replace newName and newTag so "name" stays PLACEHOLDER_ECR_URI for kustomize to match base image
           sed -i "s|newTag:.*|newTag: ${{ needs.build-push.outputs.image_tag }}|g" kustomization.yaml
           sed -i "s|newName:.*|newName: ${ECR_URI}|g" kustomization.yaml
       - name: Commit and push
