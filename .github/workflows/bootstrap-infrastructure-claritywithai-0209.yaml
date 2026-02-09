@@ -90,8 +90,9 @@ jobs:
       - name: Configure kubeconfig (EKS)
         run: |
           aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.SPOKE_CLUSTER }} --kubeconfig $(pwd)/kubeconfig
+          export KUBECONFIG=$(pwd)/kubeconfig
+          kubectl get nodes
           echo "KUBECONFIG=$(pwd)/kubeconfig" >> $GITHUB_ENV
-          kubectl get nodes || true
       - name: Create namespace
         run: |
           kubectl create namespace ${{ env.NAMESPACE_DEV }} --dry-run=client -o yaml | kubectl apply -f -
@@ -122,8 +123,9 @@ jobs:
       - name: Configure kubeconfig (EKS hub)
         run: |
           aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.HUB_CLUSTER }} --kubeconfig $(pwd)/kubeconfig
-          echo "KUBECONFIG=$(pwd)/kubeconfig" >> $GITHUB_ENV
+          export KUBECONFIG=$(pwd)/kubeconfig
           kubectl cluster-info
+          echo "KUBECONFIG=$(pwd)/kubeconfig" >> $GITHUB_ENV
       - name: Register repository with ArgoCD (GH_PAT for repo access)
         run: |
           kubectl create secret generic repo-${{ env.APP_NAME }} \
@@ -152,8 +154,9 @@ jobs:
       - name: Configure kubeconfig (EKS hub)
         run: |
           aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.HUB_CLUSTER }} --kubeconfig $(pwd)/kubeconfig
-          echo "KUBECONFIG=$(pwd)/kubeconfig" >> $GITHUB_ENV
+          export KUBECONFIG=$(pwd)/kubeconfig
           kubectl cluster-info
+          echo "KUBECONFIG=$(pwd)/kubeconfig" >> $GITHUB_ENV
       - name: Apply ArgoCD Application
         run: |
           kubectl apply -f .opsera-${{ env.APP_NAME }}/argocd/dev/application.yaml
