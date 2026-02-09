@@ -5,9 +5,8 @@
 1. **Add these GitHub Secrets** (Settings → Secrets and variables → Actions) with **no trailing newlines or spaces**:
    - `AWS_ACCESS_KEY_ID`
    - `AWS_SECRET_ACCESS_KEY`
-   - `KUBECONFIG_SPOKE` – base64-encoded kubeconfig for the **spoke** cluster (or leave unset if using EKS; bootstrap/CI will use `aws eks update-kubeconfig` for the spoke)
-   - `KUBECONFIG_HUB` – base64-encoded kubeconfig for the **ArgoCD hub** cluster (required for bootstrap)
-   - `GH_PAT` – GitHub Personal Access Token with `repo` and `actions: write` (for ArgoCD repo access and optional workflow dispatch)
+   - `GH_PAT` – GitHub Personal Access Token with `repo` (and `actions: write` if using workflow dispatch). Used for ArgoCD repo access so the hub can clone this repo.
+   - Hub and spoke cluster access use **EKS** in the same AWS account (`aws eks update-kubeconfig`); no `KUBECONFIG_HUB` or `KUBECONFIG_SPOKE` needed if both clusters are EKS.
 
    Pasting secrets with trailing newlines can cause **"Invalid header value"** errors. To avoid that:
    - Paste each secret on a single line with no extra spaces or newlines, or
