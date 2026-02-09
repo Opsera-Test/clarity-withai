@@ -79,18 +79,16 @@ jobs:
         run: |
           AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
           echo "account_id=$AWS_ACCOUNT_ID" >> $GITHUB_OUTPUT
-      - name: Configure kubeconfig
+      - name: Configure kubeconfig (EKS)
         run: |
-          echo "${{ secrets.KUBECONFIG_SPOKE }}" | base64 -d > kubeconfig
-          export KUBECONFIG=$(pwd)/kubeconfig
+          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.SPOKE_CLUSTER }} --kubeconfig $(pwd)/kubeconfig
+          echo "KUBECONFIG=$(pwd)/kubeconfig" >> $GITHUB_ENV
           kubectl get nodes || true
       - name: Create namespace
         run: |
-          export KUBECONFIG=$(pwd)/kubeconfig
           kubectl create namespace ${{ env.NAMESPACE_DEV }} --dry-run=client -o yaml | kubectl apply -f -
       - name: Create ECR pull secret
         run: |
-          export KUBECONFIG=$(pwd)/kubeconfig
           ECR_TOKEN=$(aws ecr get-login-password --region ${{ env.AWS_REGION }})
           kubectl create secret docker-registry ecr-pull-secret \
             --docker-server=${{ steps.aws.outputs.account_id }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com \
