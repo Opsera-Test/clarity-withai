@@ -114,6 +114,13 @@ jobs:
     needs: [update-manifests]
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Use latest main (manifests updated by update-manifests)
+        run: |
+          git fetch origin main
+          git checkout origin/main
       - name: Pre-flight – trim AWS secrets (avoid Invalid header value)
         run: |
           echo "AWS_ACCESS_KEY_ID=$(echo -n "${{ secrets.AWS_ACCESS_KEY_ID }}" | tr -d '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')" >> $GITHUB_ENV
