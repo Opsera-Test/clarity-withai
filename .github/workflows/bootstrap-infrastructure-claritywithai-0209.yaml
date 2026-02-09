@@ -19,10 +19,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Pre-flight – trim AWS secrets (avoid Invalid header value)
+        run: |
+          echo "AWS_ACCESS_KEY_ID=$(echo -n "${{ secrets.AWS_ACCESS_KEY_ID }}" | tr -d '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')" >> $GITHUB_ENV
+          echo "AWS_SECRET_ACCESS_KEY=$(echo -n "${{ secrets.AWS_SECRET_ACCESS_KEY }}" | tr -d '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')" >> $GITHUB_ENV
       - uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
       - name: Get AWS Account ID
         id: aws
@@ -68,10 +72,14 @@ jobs:
     needs: update-config-files
     steps:
       - uses: actions/checkout@v4
+      - name: Pre-flight – trim AWS secrets (avoid Invalid header value)
+        run: |
+          echo "AWS_ACCESS_KEY_ID=$(echo -n "${{ secrets.AWS_ACCESS_KEY_ID }}" | tr -d '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')" >> $GITHUB_ENV
+          echo "AWS_SECRET_ACCESS_KEY=$(echo -n "${{ secrets.AWS_SECRET_ACCESS_KEY }}" | tr -d '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')" >> $GITHUB_ENV
       - uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
       - uses: azure/setup-kubectl@v3
       - name: Get AWS Account ID
@@ -102,14 +110,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: azure/setup-kubectl@v3
-      - name: Configure kubeconfig for hub
+      - name: Pre-flight – verify KUBECONFIG_HUB (decode and cluster-info)
         run: |
           echo "${{ secrets.KUBECONFIG_HUB }}" | base64 -d > kubeconfig
           export KUBECONFIG=$(pwd)/kubeconfig
-          kubectl get nodes || true
+          if [ ! -s kubeconfig ]; then
+            echo "::error::KUBECONFIG_HUB is missing or invalid - add the hub cluster kubeconfig (base64) to GitHub Secrets."
+            exit 1
+          fi
+          if ! kubectl cluster-info; then
+            echo "::error::KUBECONFIG_HUB is missing or invalid - add the hub cluster kubeconfig (base64) to GitHub Secrets."
+            exit 1
+          fi
+          echo "KUBECONFIG=$(pwd)/kubeconfig" >> $GITHUB_ENV
       - name: Register repository with ArgoCD
         run: |
-          export KUBECONFIG=$(pwd)/kubeconfig
           kubectl create secret generic repo-${{ env.APP_NAME }} \
             --from-literal=url=https://x-access-token:${{ secrets.GH_PAT }}@github.com/${{ github.repository }}.git \
             --from-literal=password=${{ secrets.GH_PAT }} \
@@ -124,11 +139,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: azure/setup-kubectl@v3
-      - name: Configure kubeconfig for hub
+      - name: Pre-flight – verify KUBECONFIG_HUB (decode and cluster-info)
         run: |
           echo "${{ secrets.KUBECONFIG_HUB }}" | base64 -d > kubeconfig
           export KUBECONFIG=$(pwd)/kubeconfig
+          if [ ! -s kubeconfig ]; then
+            echo "::error::KUBECONFIG_HUB is missing or invalid - add the hub cluster kubeconfig (base64) to GitHub Secrets."
+            exit 1
+          fi
+          if ! kubectl cluster-info; then
+            echo "::error::KUBECONFIG_HUB is missing or invalid - add the hub cluster kubeconfig (base64) to GitHub Secrets."
+            exit 1
+          fi
+          echo "KUBECONFIG=$(pwd)/kubeconfig" >> $GITHUB_ENV
       - name: Apply ArgoCD Application
         run: |
-          export KUBECONFIG=$(pwd)/kubeconfig
           kubectl apply -f .opsera-${{ env.APP_NAME }}/argocd/dev/application.yaml

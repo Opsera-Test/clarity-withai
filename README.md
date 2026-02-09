@@ -1,5 +1,7 @@
 # Welcome to your Lovable project
 
+**Code-to-Cloud (Opsera):** See [.github/WORKFLOWS.md](.github/WORKFLOWS.md) for **before first run** (secrets, bootstrap order) and workflow overview.
+
 ## Project info
 
 **URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID

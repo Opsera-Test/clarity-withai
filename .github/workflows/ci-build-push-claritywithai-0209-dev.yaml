@@ -11,6 +11,7 @@ env:
   TENANT: opsera
   AWS_REGION: us-west-2
   ENV: dev
+  SPOKE_CLUSTER: opsera-usw2-np
 
 jobs:
   security-scan:
@@ -34,10 +35,14 @@ jobs:
       ecr_uri: ${{ steps.ecr.outputs.ecr_uri }}
     steps:
       - uses: actions/checkout@v4
+      - name: Pre-flight – trim AWS secrets (avoid Invalid header value)
+        run: |
+          echo "AWS_ACCESS_KEY_ID=$(echo -n "${{ secrets.AWS_ACCESS_KEY_ID }}" | tr -d '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')" >> $GITHUB_ENV
+          echo "AWS_SECRET_ACCESS_KEY=$(echo -n "${{ secrets.AWS_SECRET_ACCESS_KEY }}" | tr -d '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')" >> $GITHUB_ENV
       - uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
       - name: Get AWS Account ID
         id: aws
@@ -72,10 +77,14 @@ jobs:
     needs: [build-push]
     steps:
       - uses: actions/checkout@v4
+      - name: Pre-flight – trim AWS secrets (avoid Invalid header value)
+        run: |
+          echo "AWS_ACCESS_KEY_ID=$(echo -n "${{ secrets.AWS_ACCESS_KEY_ID }}" | tr -d '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')" >> $GITHUB_ENV
+          echo "AWS_SECRET_ACCESS_KEY=$(echo -n "${{ secrets.AWS_SECRET_ACCESS_KEY }}" | tr -d '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')" >> $GITHUB_ENV
       - uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
       - name: Get AWS Account ID
         id: aws
@@ -99,11 +108,63 @@ jobs:
           git push origin main
 
   deploy-dev:
+    runs-on: ubuntu-latest
     needs: [update-manifests]
-    uses: ./.github/workflows/opsera-deploy-claritywithai-0209.yml
-    with:
-      environment: dev
-    secrets: inherit
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pre-flight – trim AWS secrets (avoid Invalid header value)
+        run: |
+          echo "AWS_ACCESS_KEY_ID=$(echo -n "${{ secrets.AWS_ACCESS_KEY_ID }}" | tr -d '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')" >> $GITHUB_ENV
+          echo "AWS_SECRET_ACCESS_KEY=$(echo -n "${{ secrets.AWS_SECRET_ACCESS_KEY }}" | tr -d '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')" >> $GITHUB_ENV
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Get AWS Account ID
+        id: aws
+        run: |
+          AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          echo "account_id=$AWS_ACCOUNT_ID" >> $GITHUB_OUTPUT
+      - uses: azure/setup-kubectl@v3
+      - name: Configure kubeconfig (EKS spoke)
+        run: |
+          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.SPOKE_CLUSTER }} --kubeconfig $(pwd)/kubeconfig
+          echo "KUBECONFIG=$(pwd)/kubeconfig" >> $GITHUB_ENV
+      - name: Set namespace and ECR URI
+        id: vars
+        run: |
+          echo "namespace=opsera-claritywithai-0209-dev" >> $GITHUB_OUTPUT
+          echo "ecr_uri=${{ steps.aws.outputs.account_id }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/claritywithai-0209" >> $GITHUB_OUTPUT
+      - name: Refresh ECR pull secret
+        run: |
+          ECR_TOKEN=$(aws ecr get-login-password --region ${{ env.AWS_REGION }})
+          kubectl create secret docker-registry ecr-pull-secret \
+            --docker-server=${{ steps.aws.outputs.account_id }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com \
+            --docker-username=AWS --docker-password="$ECR_TOKEN" \
+            --namespace=${{ steps.vars.outputs.namespace }} \
+            --dry-run=client -o yaml | kubectl apply -f -
+      - name: Apply manifests
+        run: |
+          kubectl apply -k .opsera-claritywithai-0209/k8s/overlays/dev --server-side --force-conflicts 2>/dev/null || kubectl apply -k .opsera-claritywithai-0209/k8s/overlays/dev
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/claritywithai-0209 -n ${{ steps.vars.outputs.namespace }} --timeout=300s
+      - name: Pod status
+        run: |
+          kubectl get pods -n ${{ steps.vars.outputs.namespace }} -l app=claritywithai-0209 -o wide | tee -a $GITHUB_STEP_SUMMARY
+      - name: Health check (port-forward)
+        run: |
+          POD=$(kubectl get pods -n ${{ steps.vars.outputs.namespace }} -l app=claritywithai-0209 -o jsonpath='{.items[0].metadata.name}')
+          kubectl port-forward -n ${{ steps.vars.outputs.namespace }} $POD 8081:8080 &
+          sleep 3
+          wget -qO- http://localhost:8081/ | head -c 200
+          echo ""
+      - name: Deployment summary
+        run: |
+          echo "## Deploy complete" >> $GITHUB_STEP_SUMMARY
+          echo "- Environment: dev" >> $GITHUB_STEP_SUMMARY
+          echo "- Namespace: ${{ steps.vars.outputs.namespace }}" >> $GITHUB_STEP_SUMMARY
 
   trigger-landscape:
     needs: [deploy-dev]
