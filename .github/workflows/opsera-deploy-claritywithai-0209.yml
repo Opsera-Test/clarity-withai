@@ -27,7 +27,6 @@ env:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}
     steps:
       - name: Check Environment Filter
         id: check
