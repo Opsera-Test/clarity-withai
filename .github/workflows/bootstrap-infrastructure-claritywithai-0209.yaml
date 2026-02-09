@@ -111,29 +111,19 @@ jobs:
       - uses: actions/checkout@v4
       - uses: azure/setup-kubectl@v3
       - name: Pre-flight – verify KUBECONFIG_HUB (decode and cluster-info)
-        id: preflight
         run: |
           echo "${{ secrets.KUBECONFIG_HUB }}" | base64 -d > kubeconfig
-          if [ ! -s kubeconfig ]; then
-            echo "skip_hub=true" >> $GITHUB_OUTPUT
-            echo "::notice::KUBECONFIG_HUB is missing or empty. ArgoCD hub steps will be skipped. Add the hub kubeconfig (base64) to GitHub Secrets and re-run to complete."
-            exit 0
-          fi
           export KUBECONFIG=$(pwd)/kubeconfig
-          if ! kubectl cluster-info 2>/dev/null; then
-            echo "skip_hub=true" >> $GITHUB_OUTPUT
-            echo "::notice::KUBECONFIG_HUB is invalid or cluster unreachable. ArgoCD hub steps will be skipped. Fix the secret and re-run to complete."
-            exit 0
+          if [ ! -s kubeconfig ]; then
+            echo "::error::KUBECONFIG_HUB is missing or invalid - add the hub cluster kubeconfig (base64) to GitHub Secrets."
+            exit 1
           fi
-          echo "skip_hub=false" >> $GITHUB_OUTPUT
+          if ! kubectl cluster-info; then
+            echo "::error::KUBECONFIG_HUB is missing or invalid - add the hub cluster kubeconfig (base64) to GitHub Secrets."
+            exit 1
+          fi
           echo "KUBECONFIG=$(pwd)/kubeconfig" >> $GITHUB_ENV
-      - name: Hub skipped (no valid KUBECONFIG_HUB)
-        if: steps.preflight.outputs.skip_hub == 'true'
-        run: |
-          echo "## ArgoCD hub steps skipped" >> $GITHUB_STEP_SUMMARY
-          echo "Add **KUBECONFIG_HUB** (base64-encoded hub cluster kubeconfig) to GitHub Secrets, then re-run this workflow to register the repo and apply the ArgoCD application." >> $GITHUB_STEP_SUMMARY
       - name: Register repository with ArgoCD
-        if: steps.preflight.outputs.skip_hub != 'true'
         run: |
           kubectl create secret generic repo-${{ env.APP_NAME }} \
             --from-literal=url=https://x-access-token:${{ secrets.GH_PAT }}@github.com/${{ github.repository }}.git \
@@ -150,28 +140,18 @@ jobs:
       - uses: actions/checkout@v4
       - uses: azure/setup-kubectl@v3
       - name: Pre-flight – verify KUBECONFIG_HUB (decode and cluster-info)
-        id: preflight
         run: |
           echo "${{ secrets.KUBECONFIG_HUB }}" | base64 -d > kubeconfig
-          if [ ! -s kubeconfig ]; then
-            echo "skip_hub=true" >> $GITHUB_OUTPUT
-            echo "::notice::KUBECONFIG_HUB is missing or empty. Apply step skipped."
-            exit 0
-          fi
           export KUBECONFIG=$(pwd)/kubeconfig
-          if ! kubectl cluster-info 2>/dev/null; then
-            echo "skip_hub=true" >> $GITHUB_OUTPUT
-            echo "::notice::KUBECONFIG_HUB is invalid or cluster unreachable. Apply step skipped."
-            exit 0
+          if [ ! -s kubeconfig ]; then
+            echo "::error::KUBECONFIG_HUB is missing or invalid - add the hub cluster kubeconfig (base64) to GitHub Secrets."
+            exit 1
           fi
-          echo "skip_hub=false" >> $GITHUB_OUTPUT
+          if ! kubectl cluster-info; then
+            echo "::error::KUBECONFIG_HUB is missing or invalid - add the hub cluster kubeconfig (base64) to GitHub Secrets."
+            exit 1
+          fi
           echo "KUBECONFIG=$(pwd)/kubeconfig" >> $GITHUB_ENV
-      - name: Apply step skipped (no valid KUBECONFIG_HUB)
-        if: steps.preflight.outputs.skip_hub == 'true'
-        run: |
-          echo "## ArgoCD apply skipped" >> $GITHUB_STEP_SUMMARY
-          echo "Add **KUBECONFIG_HUB** and re-run the workflow to apply the ArgoCD application." >> $GITHUB_STEP_SUMMARY
       - name: Apply ArgoCD Application
-        if: steps.preflight.outputs.skip_hub != 'true'
         run: |
           kubectl apply -f .opsera-${{ env.APP_NAME }}/argocd/dev/application.yaml
