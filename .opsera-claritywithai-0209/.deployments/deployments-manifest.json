@@ -1,6 +1,13 @@
 {
   "entries": [
     {
+      "timestamp": "2026-02-10T182105",
+      "commit": "40d51ec",
+      "environment": "dev",
+      "status": "LIVE",
+      "landscapeFile": "landscapes/2026-02-10T182105.md"
+    },
+    {
       "timestamp": "2026-02-10T121553",
       "commit": "d562bbf",
       "environment": "dev",
