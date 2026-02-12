@@ -184,11 +184,12 @@ jobs:
         run: |
           AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
           ECR_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com"
-          aws ecr get-login-password --region ${{ env.AWS_REGION }} | kubectl --context spoke create secret docker-registry ecr-pull-secret \
+          ECR_PASSWORD=$(aws ecr get-login-password --region ${{ env.AWS_REGION }})
+          kubectl --context spoke create secret docker-registry ecr-pull-secret \
             --namespace ${{ env.NAMESPACE }} \
             --docker-server=${ECR_URI} \
             --docker-username=AWS \
-            --docker-password-stdin \
+            --docker-password="${ECR_PASSWORD}" \
             --dry-run=client -o yaml | kubectl --context spoke apply -f -
           echo "✓ ECR secret refreshed"
 
