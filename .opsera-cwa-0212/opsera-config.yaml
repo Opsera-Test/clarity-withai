@@ -1,7 +1,0 @@
-tenant: opsera
-app_name: cwa-0212
-argocd_server: argocd-usw2.agent.opsera.dev
-domain: agent.opsera.dev
-hub_cluster: argocd-usw2
-spoke_cluster: opsera-usw2-np
-aws_region: us-west-2

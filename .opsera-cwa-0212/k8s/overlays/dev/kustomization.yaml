@@ -1,9 +1,0 @@
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-namespace: opsera-cwa-0212-dev
-resources:
-  - ../../base
-images:
-  - name: PLACEHOLDER_ECR_URI
-    newName: 792373136340.dkr.ecr.us-west-2.amazonaws.com/opsera/cwa-0212
-    newTag: f65364d463a1d2ccb8cab5521078dfb86aee572d
