@@ -5,5 +5,5 @@ resources:
   - ../../base
 images:
   - name: PLACEHOLDER_ECR_URI
-    newName: PLACEHOLDER_ECR_URI
-    newTag: placeholder
+    newName: 792373136340.dkr.ecr.us-west-2.amazonaws.com/opsera/cwa-0212
+    newTag: f65364d463a1d2ccb8cab5521078dfb86aee572d
