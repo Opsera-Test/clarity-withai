@@ -17,5 +17,5 @@ labels:
 
 images:
   - name: cwa-0213
-    newName: 000000000000.dkr.ecr.us-west-2.amazonaws.com/opsera/cwa-0213
-    newTag: dev-initial
+    newName: 792373136340.dkr.ecr.us-west-2.amazonaws.com/opsera/cwa-0213
+    newTag: dev-08006aba-20260213214427
