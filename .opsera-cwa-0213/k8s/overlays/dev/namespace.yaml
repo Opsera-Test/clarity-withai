@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: opsera-cwa-0213-dev
+  labels:
+    tenant: opsera
+    app: cwa-0213
+    environment: dev
+    managed-by: opsera-c2c

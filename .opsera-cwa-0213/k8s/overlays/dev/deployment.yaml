@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cwa-0213
+  labels:
+    app: cwa-0213
+    environment: dev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cwa-0213
+  template:
+    metadata:
+      labels:
+        app: cwa-0213
+        environment: dev
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+      imagePullSecrets:
+        - name: ecr-pull-secret
+      containers:
+        - name: cwa-0213
+          image: cwa-0213:placeholder
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 20
