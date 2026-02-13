@@ -71,12 +71,12 @@ jobs:
             ERRORS+=("ECR repository not created")
           fi
 
-          aws eks update-kubeconfig --name ${SPOKE_CLUSTER} --region ${AWS_REGION}
+          aws eks update-kubeconfig --name ${SPOKE_CLUSTER} --region ${AWS_REGION} --alias ${SPOKE_CLUSTER}
           if ! kubectl get namespace ${NAMESPACE} &>/dev/null; then
             ERRORS+=("Namespace not created")
           fi
 
-          aws eks update-kubeconfig --name ${HUB_CLUSTER} --region ${AWS_REGION}
+          aws eks update-kubeconfig --name ${HUB_CLUSTER} --region ${AWS_REGION} --alias ${HUB_CLUSTER}
           if ! kubectl get secret repo-${GITHUB_REPOSITORY_OWNER}-${APP_NAME} -n argocd &>/dev/null; then
             ERRORS+=("ArgoCD repository not registered")
           fi
@@ -251,7 +251,7 @@ jobs:
 
       - name: Setup Kubeconfig (Hub)
         run: |
-          aws eks update-kubeconfig --name ${HUB_CLUSTER} --region ${AWS_REGION}
+          aws eks update-kubeconfig --name ${HUB_CLUSTER} --region ${AWS_REGION} --alias ${HUB_CLUSTER}
           kubectl config use-context ${HUB_CLUSTER}
 
       - name: Apply ArgoCD Application
@@ -307,7 +307,7 @@ jobs:
 
       - name: Connect to Spoke
         run: |
-          aws eks update-kubeconfig --name ${SPOKE_CLUSTER} --region ${AWS_REGION}
+          aws eks update-kubeconfig --name ${SPOKE_CLUSTER} --region ${AWS_REGION} --alias ${SPOKE_CLUSTER}
           kubectl config use-context ${SPOKE_CLUSTER}
 
       - name: Refresh ECR Pull Secret
@@ -337,7 +337,7 @@ jobs:
 
       - name: Connect to Hub
         run: |
-          aws eks update-kubeconfig --name ${HUB_CLUSTER} --region ${AWS_REGION}
+          aws eks update-kubeconfig --name ${HUB_CLUSTER} --region ${AWS_REGION} --alias ${HUB_CLUSTER}
           kubectl config use-context ${HUB_CLUSTER}
 
       - name: Hard Refresh and Sync
@@ -375,7 +375,7 @@ jobs:
 
       - name: Connect to Spoke
         run: |
-          aws eks update-kubeconfig --name ${SPOKE_CLUSTER} --region ${AWS_REGION}
+          aws eks update-kubeconfig --name ${SPOKE_CLUSTER} --region ${AWS_REGION} --alias ${SPOKE_CLUSTER}
           kubectl config use-context ${SPOKE_CLUSTER}
 
       - name: Verify Pods
