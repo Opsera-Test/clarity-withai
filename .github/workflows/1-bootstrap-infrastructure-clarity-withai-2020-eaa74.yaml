@@ -72,7 +72,7 @@ jobs:
 
       - name: Register Repository (Idempotent)
         run: |
-          REPO_SECRET_NAME="repo-${GITHUB_REPOSITORY_OWNER}-${APP_NAME}"
+          REPO_SECRET_NAME="repo-$(echo ${GITHUB_REPOSITORY_OWNER} | tr '[:upper:]' '[:lower:]')-${APP_NAME}"
           if kubectl --context hub get secret "$REPO_SECRET_NAME" -n argocd &>/dev/null; then
             echo "Repository secret already exists - skipping"
             exit 0
