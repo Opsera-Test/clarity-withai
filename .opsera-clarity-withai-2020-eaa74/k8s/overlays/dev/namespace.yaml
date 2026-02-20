@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: opsera-clarity-withai-2020-eaa74-dev
+  labels:
+    tenant: opsera
+    app: clarity-withai-2020-eaa74
+    environment: dev
+    managed-by: opsera-c2c

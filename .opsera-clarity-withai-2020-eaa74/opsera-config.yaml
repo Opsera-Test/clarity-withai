@@ -1,0 +1,26 @@
+# Opsera Code-to-Cloud Configuration - clarity-withai-2020-eaa74
+# Single source of truth for deployment
+
+tenant: opsera
+app_name: clarity-withai-2020-eaa74
+cloud_provider: aws
+region: us-west-2
+region_short: usw2
+domain: agent.opsera.dev
+
+clusters:
+  hub: argocd-usw2
+  spoke: opsera-usw2-np
+
+ecr_repo: opsera/clarity-withai-2020-eaa74
+port: 8080
+
+environments:
+  dev:
+    namespace: opsera-clarity-withai-2020-eaa74-dev
+    strategy: rolling
+    url: https://clarity-withai-2020-eaa74.agent.opsera.dev
+
+security:
+  gitleaks: warn
+  grype: warn
