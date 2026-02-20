@@ -18,4 +18,4 @@ labels:
 images:
   - name: clarity-withai-2020-eaa74
     newName: 792373136340.dkr.ecr.us-west-2.amazonaws.com/opsera/clarity-withai-2020-eaa74
-    newTag: placeholder
+    newTag: dev-13f9c26a-20260220172035
