@@ -13,5 +13,5 @@ commonLabels:
 
 images:
   - name: PLACEHOLDER_ECR_URI
-    newName: PLACEHOLDER_ECR_REGISTRY/opsera/cwa-test-3
-    newTag: v1.0.0
+    newName: 792373136340.dkr.ecr.us-west-2.amazonaws.com/opsera/cwa-test-3
+    newTag: a875e02-20260225180735
