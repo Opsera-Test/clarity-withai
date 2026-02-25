@@ -1,0 +1,40 @@
+# ════════════════════════════════════════════════════════════════
+# Opsera Code-to-Cloud Configuration
+# Application: cwa-test-3 | Tenant: opsera
+# Generated: 2026-02-24 | Version: v2.4
+# ════════════════════════════════════════════════════════════════
+
+app:
+  name: cwa-test-3
+  tenant: opsera
+  language: react-typescript
+  framework: vite
+  port: 8080
+
+cloud:
+  provider: aws
+  region: us-west-2
+  region_short: usw2
+
+clusters:
+  hub: argocd-usw2
+  spoke: opsera-usw2-np
+
+argocd:
+  server: argocd-usw2.agent.opsera.dev
+  namespace: argocd
+
+ecr:
+  repository: opsera/cwa-test-3
+
+environments:
+  - name: dev
+    namespace: opsera-cwa-test-3-dev
+    replicas: 1
+    url: https://cwa-test-3-dev.agent.opsera.dev
+    branch: main
+
+docker:
+  dockerfile: Dockerfile
+  base_image: nginxinc/nginx-unprivileged:alpine
+  build_context: .

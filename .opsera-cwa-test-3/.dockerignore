@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.git/
+.github/
+.opsera-cwa-test-3/
+.opsera-cwa-test-1/
+.opsera-cwa-test-2/
+*.md
+*.log
+.env*
+.DS_Store
+coverage/
+.nyc_output/
