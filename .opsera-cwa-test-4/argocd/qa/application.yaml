@@ -1,0 +1,34 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: opsera-cwa-test-4-qa
+  namespace: argocd
+  labels:
+    app: cwa-test-4
+    tenant: opsera
+    environment: qa
+    managed-by: opsera-c2c
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Opsera-Test/clarity-withai.git
+    targetRevision: main
+    path: .opsera-cwa-test-4/k8s/overlays/qa
+  destination:
+    name: opsera-usw2-np
+    namespace: opsera-cwa-test-4-qa
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m

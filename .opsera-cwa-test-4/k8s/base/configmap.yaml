@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cwa-test-4-config
+  labels:
+    app: cwa-test-4
+    tenant: opsera
+    managed-by: opsera-c2c
+data:
+  APP_NAME: "cwa-test-4"
+  LOG_LEVEL: "info"

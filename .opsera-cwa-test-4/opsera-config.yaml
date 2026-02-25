@@ -1,0 +1,75 @@
+# ════════════════════════════════════════════════════════════════
+# Opsera Code-to-Cloud Configuration — Recommended Setup
+# Application: cwa-test-4 | Tenant: opsera | v2.4
+# ════════════════════════════════════════════════════════════════
+
+app:
+  name: cwa-test-4
+  tenant: opsera
+  language: react-typescript
+  framework: vite
+  port: 8080
+  setup_mode: recommended
+
+cloud:
+  provider: aws
+  region: us-west-2
+  region_short: usw2
+
+clusters:
+  hub: argocd-usw2
+  spoke: opsera-usw2-np
+
+argocd:
+  server: argocd-usw2.agent.opsera.dev
+  namespace: argocd
+
+ecr:
+  repository: opsera/cwa-test-4
+
+environments:
+  - name: dev
+    namespace: opsera-cwa-test-4-dev
+    strategy: rolling
+    replicas: 1
+    url: https://cwa-test-4-dev.agent.opsera.dev
+    branch: main
+  - name: qa
+    namespace: opsera-cwa-test-4-qa
+    strategy: canary
+    replicas: 2
+    url: https://cwa-test-4-qa.agent.opsera.dev
+    promoted_from: dev
+  - name: staging
+    namespace: opsera-cwa-test-4-staging
+    strategy: blue-green
+    replicas: 2
+    url: https://cwa-test-4-staging.agent.opsera.dev
+    promoted_from: qa
+
+docker:
+  dockerfile: Dockerfile
+  base_image: nginxinc/nginx-unprivileged:alpine
+  build_context: .
+
+integrations:
+  gitleaks:
+    enabled: true
+    mode: warn
+  grype:
+    enabled: true
+    mode: warn
+  sonarqube:
+    enabled: true
+    mode: warn
+    host: https://691b48d8f95f3e491f76c256-1769440549.prodqa.opsera.io
+    project_key: cwa-test-4
+  prometheus:
+    enabled: true
+    url: http://prometheus-server.monitoring.svc.cluster.local:9090
+    namespace: monitoring
+  slack:
+    enabled: true
+    notify_on: failures_only
+  jira:
+    enabled: false

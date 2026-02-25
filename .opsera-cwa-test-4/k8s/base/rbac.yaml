@@ -1,0 +1,28 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cwa-test-4-role
+  labels:
+    app: cwa-test-4
+    tenant: opsera
+    managed-by: opsera-c2c
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cwa-test-4-rolebinding
+  labels:
+    app: cwa-test-4
+    tenant: opsera
+    managed-by: opsera-c2c
+subjects:
+  - kind: ServiceAccount
+    name: cwa-test-4
+roleRef:
+  kind: Role
+  name: cwa-test-4-role
+  apiGroup: rbac.authorization.k8s.io

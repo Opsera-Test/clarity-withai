@@ -1,0 +1,206 @@
+# ════════════════════════════════════════════════════════════════
+# Bootstrap Infrastructure - cwa-test-4 (Recommended Setup)
+# ONE-TIME SETUP: Run manually BEFORE first CI/CD deployment
+# Environments: dev (rolling) | qa (canary) | staging (blue-green)
+# ════════════════════════════════════════════════════════════════
+
+name: "Bootstrap Infrastructure - cwa-test-4"
+
+on:
+  workflow_dispatch:
+
+env:
+  APP_NAME: cwa-test-4
+  TENANT: opsera
+  AWS_REGION: us-west-2
+  HUB_CLUSTER: argocd-usw2
+  SPOKE_CLUSTER: opsera-usw2-np
+  ECR_REPO_NAME: opsera/cwa-test-4
+
+jobs:
+
+  setup-ecr:
+    name: "📦 Setup ECR Repository"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Create ECR Repository idempotent
+        run: |
+          if aws ecr describe-repositories \
+            --repository-names "${ECR_REPO_NAME}" --region ${AWS_REGION} 2>/dev/null; then
+            echo "✓ ECR repository already exists"
+          else
+            aws ecr create-repository \
+              --repository-name "${ECR_REPO_NAME}" \
+              --image-tag-mutability IMMUTABLE \
+              --encryption-configuration encryptionType=AES256 \
+              --region ${AWS_REGION} \
+              --tags Key=tenant,Value=${TENANT} Key=app,Value=${APP_NAME} Key=managed-by,Value=opsera-c2c
+            echo "✓ ECR repository created: ${ECR_REPO_NAME}"
+          fi
+
+  register-repo:
+    name: "🔗 Register Repo with ArgoCD"
+    runs-on: ubuntu-latest
+    needs: [setup-ecr]
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Hub Cluster Access
+        run: aws eks update-kubeconfig --name ${HUB_CLUSTER} --region ${AWS_REGION} --alias hub
+
+      - name: Register GitHub Repo with ArgoCD idempotent
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          REPO_SECRET_NAME="repo-$(echo ${{ github.repository_owner }} | tr '[:upper:]' '[:lower:]')-${APP_NAME}"
+          if kubectl --context hub get secret "${REPO_SECRET_NAME}" -n argocd &>/dev/null; then
+            echo "✓ Repository already registered"
+          else
+            cat <<EOF | kubectl --context hub apply -f -
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: ${REPO_SECRET_NAME}
+            namespace: argocd
+            labels:
+              argocd.argoproj.io/secret-type: repository
+          type: Opaque
+          stringData:
+            type: git
+            url: https://github.com/${{ github.repository }}.git
+            password: ${GH_PAT}
+            username: git
+          EOF
+            echo "✓ Repository registered with ArgoCD"
+          fi
+
+  register-spoke:
+    name: "🔀 Register Spoke Cluster"
+    runs-on: ubuntu-latest
+    needs: [register-repo]
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Hub and Spoke Access
+        run: |
+          aws eks update-kubeconfig --name ${HUB_CLUSTER} --region ${AWS_REGION} --alias hub
+          aws eks update-kubeconfig --name ${SPOKE_CLUSTER} --region ${AWS_REGION} --alias spoke
+
+      - name: Register Spoke Cluster with ArgoCD idempotent
+        run: |
+          CLUSTER_SECRET_NAME="cluster-${SPOKE_CLUSTER}"
+          if kubectl --context hub get secret "${CLUSTER_SECRET_NAME}" -n argocd &>/dev/null; then
+            echo "✓ Spoke cluster already registered"
+            exit 0
+          fi
+
+          SPOKE_SERVER=$(aws eks describe-cluster --name ${SPOKE_CLUSTER} --region ${AWS_REGION} \
+            --query 'cluster.endpoint' --output text)
+          SPOKE_CA=$(aws eks describe-cluster --name ${SPOKE_CLUSTER} --region ${AWS_REGION} \
+            --query 'cluster.certificateAuthority.data' --output text)
+
+          kubectl --context spoke create serviceaccount argocd-manager \
+            -n kube-system --dry-run=client -o yaml | kubectl --context spoke apply -f -
+
+          kubectl --context spoke create clusterrolebinding argocd-manager \
+            --clusterrole=cluster-admin \
+            --serviceaccount=kube-system:argocd-manager \
+            --dry-run=client -o yaml | kubectl --context spoke replace --force -f -
+
+          TOKEN=$(kubectl --context spoke create token argocd-manager \
+            -n kube-system --duration=87600h 2>/dev/null || \
+            kubectl --context spoke get secret -n kube-system \
+              $(kubectl --context spoke get sa argocd-manager -n kube-system \
+                -o jsonpath='{.secrets[0].name}') \
+              -o jsonpath='{.data.token}' | base64 -d)
+
+          cat <<EOF | kubectl --context hub apply -f -
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: ${CLUSTER_SECRET_NAME}
+            namespace: argocd
+            labels:
+              argocd.argoproj.io/secret-type: cluster
+          type: Opaque
+          stringData:
+            name: "${SPOKE_CLUSTER}"
+            server: "${SPOKE_SERVER}"
+            config: |
+              {"bearerToken":"${TOKEN}","tlsClientConfig":{"insecure":false,"caData":"${SPOKE_CA}"}}
+          EOF
+          echo "✓ Spoke cluster registered"
+
+  create-namespaces:
+    name: "🗂️ Create Namespaces dev+qa+staging"
+    runs-on: ubuntu-latest
+    needs: [register-spoke]
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Spoke Access
+        run: aws eks update-kubeconfig --name ${SPOKE_CLUSTER} --region ${AWS_REGION} --alias spoke
+
+      - name: Create Namespaces idempotent
+        run: |
+          for ENV in dev qa staging; do
+            NAMESPACE="${TENANT}-${APP_NAME}-${ENV}"
+            if kubectl --context spoke get namespace ${NAMESPACE} &>/dev/null; then
+              echo "✓ Namespace exists: ${NAMESPACE}"
+            else
+              kubectl --context spoke create namespace ${NAMESPACE}
+              kubectl --context spoke label namespace ${NAMESPACE} \
+                tenant=${TENANT} app=${APP_NAME} environment=${ENV} managed-by=opsera-c2c
+              echo "✓ Namespace created: ${NAMESPACE}"
+            fi
+          done
+
+  create-service-accounts:
+    name: "👤 Create Service Accounts"
+    runs-on: ubuntu-latest
+    needs: [create-namespaces]
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Spoke Access
+        run: aws eks update-kubeconfig --name ${SPOKE_CLUSTER} --region ${AWS_REGION} --alias spoke
+
+      - name: Create Service Accounts idempotent
+        run: |
+          for ENV in dev qa staging; do
+            NAMESPACE="${TENANT}-${APP_NAME}-${ENV}"
+            if kubectl --context spoke get sa ${APP_NAME} -n ${NAMESPACE} &>/dev/null; then
+              echo "✓ ServiceAccount exists in ${NAMESPACE}"
+            else
+              kubectl --context spoke create serviceaccount ${APP_NAME} -n ${NAMESPACE}
+              echo "✓ ServiceAccount created in ${NAMESPACE}"
+            fi
+          done
+          echo "✅ Bootstrap complete for cwa-test-4 (dev + qa + staging)"

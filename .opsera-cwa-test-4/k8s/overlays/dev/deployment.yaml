@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cwa-test-4
+  labels:
+    app: cwa-test-4
+    tenant: opsera
+    environment: dev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cwa-test-4
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: cwa-test-4
+        tenant: opsera
+        environment: dev
+    spec:
+      serviceAccountName: cwa-test-4
+      imagePullSecrets:
+        - name: ecr-pull-secret
+      containers:
+        - name: cwa-test-4
+          image: PLACEHOLDER_ECR_URI
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: cwa-test-4-config
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 101
+            runAsGroup: 101
+            allowPrivilegeEscalation: false
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+      securityContext:
+        fsGroup: 101
