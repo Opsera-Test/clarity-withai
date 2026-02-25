@@ -1,0 +1,13 @@
+node_modules
+npm-debug.log
+.git
+.gitignore
+.github
+.opsera-cwa-test-2
+*.md
+.env
+.env.*
+dist
+coverage
+*.test.*
+*.spec.*
