@@ -1,9 +1,0 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: opsera-cwa-test-4-staging
-  labels:
-    tenant: opsera
-    app: cwa-test-4
-    environment: staging
-    managed-by: opsera-c2c
