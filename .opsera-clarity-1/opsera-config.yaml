@@ -1,0 +1,43 @@
+apiVersion: opsera.io/v1
+kind: AppConfig
+metadata:
+  name: clarity-1
+  tenant: opsera
+spec:
+  app:
+    name: clarity-1
+    language: node
+    framework: react
+    port: 8080
+  cloud:
+    provider: AWS
+    region: us-west-2
+    ecr_repo: clarity-1
+  clusters:
+    hub: argocd-usw2
+    spoke: opsera-usw2-np
+    argocd_server: argocd-usw2.agent.opsera.dev
+    domain: agent.opsera.dev
+  environments:
+    - name: dev
+      strategy: rolling
+      namespace: opsera-clarity-1-dev
+      ingress: clarity-1-dev.agent.opsera.dev
+    - name: qa
+      strategy: canary
+      namespace: opsera-clarity-1-qa
+      ingress: clarity-1-qa.agent.opsera.dev
+    - name: staging
+      strategy: bluegreen
+      namespace: opsera-clarity-1-staging
+      ingress: clarity-1-staging.agent.opsera.dev
+  ci_cd:
+    branch: main
+    build_tool: docker
+    security_scan: gitleaks
+    container_scan: grype
+    gitops: argocd
+  generated:
+    version: "0.934"
+    date: "2026-02-27"
+    mode: recommended

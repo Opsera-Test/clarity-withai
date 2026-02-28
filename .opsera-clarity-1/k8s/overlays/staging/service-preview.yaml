@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: clarity-1-preview
+  namespace: opsera-clarity-1-staging
+  labels:
+    app: clarity-1
+    environment: staging
+    tenant: opsera
+    role: preview
+spec:
+  selector:
+    app: clarity-1
+  ports:
+    - name: http
+      protocol: TCP
+      port: 80
+      targetPort: 8080
+  type: ClusterIP

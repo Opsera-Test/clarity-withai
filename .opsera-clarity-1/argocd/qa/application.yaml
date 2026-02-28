@@ -1,0 +1,38 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: opsera-clarity-1-qa
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: clarity-1
+    app.kubernetes.io/part-of: opsera-clarity-1
+    tenant: opsera
+    environment: qa
+  annotations:
+    notifications.argoproj.io/subscribe.on-sync-succeeded.slack: deployments
+    notifications.argoproj.io/subscribe.on-sync-failed.slack: deployments
+    notifications.argoproj.io/subscribe.on-health-degraded.slack: alerts
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Opsera-Test/clarity-withai.git
+    targetRevision: main
+    path: .opsera-clarity-1/k8s/overlays/qa
+  destination:
+    name: opsera-usw2-np
+    namespace: opsera-clarity-1-qa
+  syncPolicy:
+    automated: null
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+      - ApplyOutOfSyncOnly=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m

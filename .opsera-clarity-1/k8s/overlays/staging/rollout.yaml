@@ -1,0 +1,73 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: clarity-1
+  namespace: opsera-clarity-1-staging
+  labels:
+    app: clarity-1
+    environment: staging
+    tenant: opsera
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: clarity-1
+  template:
+    metadata:
+      labels:
+        app: clarity-1
+        environment: staging
+        tenant: opsera
+    spec:
+      serviceAccountName: clarity-1
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        fsGroup: 101
+      containers:
+        - name: clarity-1
+          image: clarity-1
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: ENVIRONMENT
+              value: staging
+          envFrom:
+            - configMapRef:
+                name: clarity-1-config
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+  strategy:
+    blueGreen:
+      activeService: clarity-1
+      previewService: clarity-1-preview
+      autoPromotionEnabled: false
+      scaleDownDelaySeconds: 30
+      previewReplicaCount: 1

@@ -1,0 +1,8 @@
+node_modules
+.git
+.github
+.opsera-clarity-1
+dist
+.env*
+*.log
+README.md
