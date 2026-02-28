@@ -11,5 +11,5 @@ resources:
 
 images:
   - name: clarity-1
-    newName: PLACEHOLDER_ECR_URI
-    newTag: v1.0.0
+    newName: 792373136340.dkr.ecr.us-west-2.amazonaws.com/clarity-1
+    newTag: dev-e6baf24a-20260228001015
