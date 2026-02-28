@@ -1,9 +1,0 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: opsera-clarity-1-dev
-  labels:
-    app: clarity-1
-    environment: dev
-    tenant: opsera
-    managed-by: argocd
